@@ -167,7 +167,7 @@ class Scanner(
             }.value
         }
 
-        val thumb = thumbs.generate(file, photoId)
+        val thumb = thumbs.generate(file, photoId, data?.orientation)
         if (thumb != null) {
             transaction {
                 Photos.update({ Photos.id eq photoId }) { it[thumbPath] = thumb.toString() }

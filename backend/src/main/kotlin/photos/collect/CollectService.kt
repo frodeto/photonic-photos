@@ -20,17 +20,26 @@ class CollectService {
         val target = Path.of(targetFolder)
         Files.createDirectories(target)
 
-        val paths: List<String> = transaction {
+        val pathById: Map<Int, String> = transaction {
             Photos.selectAll()
                 .where { Photos.id inList photoIds }
-                .map { it[Photos.filePath] }
+                .associate { it[Photos.id].value to it[Photos.filePath] }
         }
 
         var copied = 0
         var skipped = 0
         val errors = mutableListOf<String>()
 
-        for (p in paths) {
+        // Iterate the requested ids (not just the rows found) so every selected photo is
+        // accounted for: copied + skipped always equals the number requested, even if an id
+        // no longer exists in the DB (e.g. a stale selection after a re-index).
+        for (id in photoIds) {
+            val p = pathById[id]
+            if (p == null) {
+                skipped++
+                errors.add("unknown photo id: $id")
+                continue
+            }
             val src = Path.of(p)
             if (!src.exists()) {
                 skipped++
