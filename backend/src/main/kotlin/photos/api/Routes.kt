@@ -130,7 +130,7 @@ fun Application.photonicModule(
                 Photos.select(Photos.createdDate).where {
                     var c: Op<Boolean> = Op.TRUE
                     if (from != null) c = c and (Photos.createdDate greaterEq from)
-                    if (to != null) c = c and (Photos.createdDate lessEq to)
+                    if (to != null) c = c and (Photos.createdDate less to) // exclusive end
                     c
                 }.map { it[Photos.createdDate] }
             }
@@ -142,14 +142,19 @@ fun Application.photonicModule(
 
         get("/photos") {
             val from = call.longParamOrNull("from")
-            val to = call.longParamOrNull("to")
+            val bucket = call.request.queryParameters["bucket"]
+            // When a bucket granularity is given, derive the exclusive end from `from` with the
+            // SAME server-side bucketing used by /timeline, so a drill-in returns exactly the
+            // photos counted in that bar (no browser-timezone recompute, no boundary drift).
+            val to = if (bucket != null && from != null) bucketEnd(from, bucket, zone)
+            else call.longParamOrNull("to")
             val limit = (call.request.queryParameters["limit"]?.toIntOrNull() ?: 200).coerceIn(1, 2000)
             val offset = (call.request.queryParameters["offset"]?.toLongOrNull() ?: 0L).coerceAtLeast(0L)
             val photos = transaction {
                 Photos.selectAll().where {
                     var c: Op<Boolean> = Op.TRUE
                     if (from != null) c = c and (Photos.createdDate greaterEq from)
-                    if (to != null) c = c and (Photos.createdDate lessEq to)
+                    if (to != null) c = c and (Photos.createdDate less to) // exclusive end
                     c
                 }.orderBy(Photos.createdDate to SortOrder.ASC)
                     .limit(limit).offset(offset)
@@ -189,7 +194,7 @@ fun Application.photonicModule(
     }
 }
 
-private fun bucketStart(epochMs: Long, bucket: String, zone: ZoneId): Long {
+internal fun bucketStart(epochMs: Long, bucket: String, zone: ZoneId): Long {
     val date = Instant.ofEpochMilli(epochMs).atZone(zone).toLocalDate()
     val start = when (bucket) {
         "year" -> date.withDayOfYear(1)
@@ -197,6 +202,17 @@ private fun bucketStart(epochMs: Long, bucket: String, zone: ZoneId): Long {
         else -> date.withDayOfMonth(1) // month
     }
     return start.atStartOfDay(zone).toInstant().toEpochMilli()
+}
+
+/** Exclusive end of the bucket containing [epochMs] — i.e. the start of the next bucket. */
+internal fun bucketEnd(epochMs: Long, bucket: String, zone: ZoneId): Long {
+    val date = Instant.ofEpochMilli(epochMs).atZone(zone).toLocalDate()
+    val nextStart = when (bucket) {
+        "year" -> date.withDayOfYear(1).plusYears(1)
+        "day" -> date.plusDays(1)
+        else -> date.withDayOfMonth(1).plusMonths(1) // month
+    }
+    return nextStart.atStartOfDay(zone).toInstant().toEpochMilli()
 }
 
 private fun org.jetbrains.exposed.sql.ResultRow.toPhotoDto(): PhotoDto = PhotoDto(

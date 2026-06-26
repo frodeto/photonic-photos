@@ -134,6 +134,17 @@ button:disabled {
   text-align: center;
 }
 
+.more {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px;
+  text-align: center;
+}
+
+.more button {
+  margin-left: 6px;
+}
+
 .status {
   color: var(--muted);
   font-size: 12px;
