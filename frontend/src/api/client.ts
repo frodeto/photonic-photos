@@ -140,10 +140,14 @@ export const api = {
     return getJson<TimelineBucket[]>(`/timeline?${qs}`);
   },
 
-  photos: (from?: number, to?: number, limit = 500) => {
-    const qs = new URLSearchParams({ limit: String(limit) });
-    if (from != null) qs.set("from", String(from));
-    if (to != null) qs.set("to", String(to));
+  // Pass `bucket` + `from` (a bucket start) to let the backend derive the exclusive period end
+  // itself — keeps the drill-in aligned with the timeline bar counts across timezones.
+  photos: (opts: { from?: number; to?: number; bucket?: Bucket; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams({ limit: String(opts.limit ?? 500) });
+    if (opts.from != null) qs.set("from", String(opts.from));
+    if (opts.to != null) qs.set("to", String(opts.to));
+    if (opts.bucket) qs.set("bucket", opts.bucket);
+    if (opts.offset) qs.set("offset", String(opts.offset));
     return getJson<Photo[]>(`/photos?${qs}`);
   },
 

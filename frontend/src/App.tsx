@@ -17,19 +17,15 @@ async function pickFolder(title: string): Promise<string | null> {
   return window.prompt(title) || null;
 }
 
-/** End of the bucket that starts at `start`, for ranged queries. */
-function bucketEnd(start: number, bucket: Bucket): number {
-  const d = new Date(start);
-  if (bucket === "year") return new Date(d.getFullYear() + 1, 0, 1).getTime();
-  if (bucket === "month") return new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
-}
+/** How many photos to fetch per drill-in page. */
+const PAGE_SIZE = 500;
 
 export default function App() {
   const [bucket, setBucket] = useState<Bucket>("year");
   const [buckets, setBuckets] = useState<TimelineBucket[]>([]);
   const [selectedBucket, setSelectedBucket] = useState<number | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [bucketTotal, setBucketTotal] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [status, setStatus] = useState<string>("");
   const [busy, setBusy] = useState(false);
@@ -39,6 +35,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Changing granularity invalidates any drill-in: a selected start is no longer a valid
+    // bucket boundary, so clear it rather than paginate against a mismatched range.
+    setSelectedBucket(null);
+    setPhotos([]);
+    setBucketTotal(0);
     refreshTimeline(bucket).catch((e) => setStatus(String(e)));
   }, [bucket, refreshTimeline]);
 
@@ -69,8 +70,28 @@ export default function App() {
 
   const onSelectBucket = async (start: number) => {
     setSelectedBucket(start);
-    const end = bucketEnd(start, bucket);
-    setPhotos(await api.photos(start, end));
+    // The timeline bar's own count is the authoritative total for this bucket.
+    setBucketTotal(buckets.find((b) => b.bucketStart === start)?.count ?? 0);
+    try {
+      setPhotos(await api.photos({ from: start, bucket, limit: PAGE_SIZE }));
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
+
+  const loadMore = async () => {
+    if (selectedBucket == null) return;
+    try {
+      const more = await api.photos({
+        from: selectedBucket,
+        bucket,
+        limit: PAGE_SIZE,
+        offset: photos.length,
+      });
+      setPhotos((prev) => [...prev, ...more]);
+    } catch (e) {
+      setStatus(String(e));
+    }
   };
 
   const toggle = (id: number) => {
@@ -126,6 +147,14 @@ export default function App() {
 
       <section className="panel">
         <PhotoStrip photos={photos} selectedIds={selectedIds} onToggle={toggle} />
+        {photos.length < bucketTotal && (
+          <div className="more">
+            Showing {photos.length} of {bucketTotal}.{" "}
+            <button onClick={loadMore} disabled={busy}>
+              Load {Math.min(PAGE_SIZE, bucketTotal - photos.length)} more
+            </button>
+          </div>
+        )}
       </section>
 
       <footer className="status">{status || "Ready."}</footer>
