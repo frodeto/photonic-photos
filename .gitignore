@@ -1,0 +1,23 @@
+# Backend (Maven)
+backend/target/
+backend/dependency-reduced-pom.xml
+
+# Frontend (Node/Vite/Tauri)
+frontend/node_modules/
+frontend/dist/
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
+
+# Bundled sidecar/resource binaries (built/downloaded locally, not committed)
+frontend/src-tauri/binaries/photonic-backend*
+frontend/src-tauri/resources/exiftool/exiftool
+frontend/src-tauri/resources/exiftool/lib/
+
+# OS / editor
+.DS_Store
+*.iml
+.idea/
+.vscode/
+
+# IntelliJ database tooling artifact
+identifier.sqlite
