@@ -3,10 +3,13 @@ package photos.api
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
@@ -35,16 +38,41 @@ import photos.model.TimelineBucket
 import photos.scan.Scanner
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.time.Instant
 import java.time.ZoneId
 
-fun Application.photonicModule(scanner: Scanner, collect: CollectService, zone: ZoneId = ZoneId.systemDefault()) {
+const val TOKEN_HEADER = "X-Photonic-Token"
+const val TOKEN_PARAM = "token"
+
+fun Application.photonicModule(
+    scanner: Scanner,
+    collect: CollectService,
+    token: String,
+    zone: ZoneId = ZoneId.systemDefault(),
+) {
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
     install(CORS) {
-        anyHost() // local-only app; backend binds 127.0.0.1
+        anyHost() // backend binds 127.0.0.1; the X-Photonic-Token check below is the real gate
         allowHeader("Content-Type")
-        allowHeader("X-Photonic-Token")
+        allowHeader(TOKEN_HEADER)
     }
+
+    // Authenticate every request against the per-launch token (constant-time compare).
+    // The token comes from the X-Photonic-Token header, or a `token` query param as a fallback
+    // for <img> thumbnail loads that can't set headers. /health is exempt so the shell/curl can
+    // probe readiness without the secret.
+    val tokenBytes = token.toByteArray()
+    intercept(ApplicationCallPipeline.Plugins) {
+        if (call.request.path() == "/health") return@intercept
+        val provided = (call.request.headers[TOKEN_HEADER]
+            ?: call.request.queryParameters[TOKEN_PARAM])?.toByteArray()
+        if (provided == null || !MessageDigest.isEqual(provided, tokenBytes)) {
+            call.respond(HttpStatusCode.Unauthorized, ErrorResponse("invalid or missing $TOKEN_HEADER"))
+            return@intercept finish()
+        }
+    }
+
     install(StatusPages) {
         exception<IllegalArgumentException> { call, cause ->
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(cause.message ?: "bad request"))
