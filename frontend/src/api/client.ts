@@ -62,6 +62,7 @@ function isTauri(): boolean {
 }
 
 let cachedBase: string | null = null;
+let cachedToken: string | null = null;
 
 async function base(): Promise<string> {
   if (cachedBase) return cachedBase;
@@ -82,8 +83,35 @@ async function base(): Promise<string> {
   return cachedBase;
 }
 
+// The backend authenticates every request (except /health) against a per-launch secret.
+// In the packaged app the Tauri shell reads it from the backend's stdout handshake; in a plain
+// browser dev session we use VITE_BACKEND_TOKEN (default "photonic-dev", which the backend must
+// be launched with: `PHOTONIC_TOKEN=photonic-dev mvn exec:java`).
+async function token(): Promise<string> {
+  if (cachedToken != null) return cachedToken;
+  if (isTauri()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    for (let i = 0; i < 80; i++) {
+      const t = await invoke<string | null>("get_backend_token");
+      if (t) {
+        cachedToken = t;
+        return cachedToken;
+      }
+      await sleep(250);
+    }
+    throw new Error("backend did not start in time");
+  }
+  cachedToken =
+    (import.meta as { env?: Record<string, string> }).env?.VITE_BACKEND_TOKEN ?? "photonic-dev";
+  return cachedToken;
+}
+
+async function authHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
+  return { "X-Photonic-Token": await token(), ...extra };
+}
+
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch((await base()) + path);
+  const res = await fetch((await base()) + path, { headers: await authHeaders() });
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -91,7 +119,7 @@ async function getJson<T>(path: string): Promise<T> {
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch((await base()) + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
@@ -119,7 +147,9 @@ export const api = {
     return getJson<Photo[]>(`/photos?${qs}`);
   },
 
-  thumbnailUrl: async (id: number) => `${await base()}/photos/${id}/thumbnail`,
+  // <img> can't send headers, so the token rides along as a query param (the backend accepts both).
+  thumbnailUrl: async (id: number) =>
+    `${await base()}/photos/${id}/thumbnail?token=${encodeURIComponent(await token())}`,
 
   collect: (photoIds: number[], targetFolder: string) =>
     postJson<CollectResult>("/collect", { photoIds, targetFolder }),

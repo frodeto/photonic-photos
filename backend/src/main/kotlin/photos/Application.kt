@@ -9,13 +9,18 @@ import photos.scan.ExifToolService
 import photos.scan.Scanner
 import photos.thumbnail.ThumbnailService
 import java.net.ServerSocket
+import java.security.SecureRandom
+import java.util.Base64
 
 /**
- * Backend entrypoint. Picks a free loopback port, prints the handshake line
+ * Backend entrypoint. Picks a free loopback port, prints the handshake lines
  *   PHOTONIC_PORT=<n>
- * on stdout (the Tauri shell reads this to know where to talk to), then serves the API.
+ *   PHOTONIC_TOKEN=<secret>
+ * on stdout (the Tauri shell reads these to know where to talk to and how to authenticate),
+ * then serves the API.
  *
- * A fixed port can be forced with PHOTONIC_PORT for local development.
+ * The port can be forced with PHOTONIC_PORT and the token with PHOTONIC_TOKEN for local
+ * development (the browser dev client reads VITE_BACKEND_TOKEN, default "photonic-dev").
  */
 fun main() {
     val dataDir = AppPaths.dataDir()
@@ -27,14 +32,24 @@ fun main() {
     val collect = CollectService()
 
     val port = System.getenv("PHOTONIC_PORT")?.toIntOrNull() ?: freePort()
+    // A per-launch secret. Only processes that can read this backend's stdout (the Tauri shell)
+    // learn it, so a malicious web page cannot forge authenticated requests to 127.0.0.1.
+    val token = System.getenv("PHOTONIC_TOKEN")?.takeIf { it.isNotBlank() } ?: generateToken()
 
-    // Handshake line on stdout — keep this the only thing written to stdout.
+    // Handshake lines on stdout — keep these the only things written to stdout.
     println("PHOTONIC_PORT=$port")
+    println("PHOTONIC_TOKEN=$token")
     System.out.flush()
 
     embeddedServer(Netty, port = port, host = "127.0.0.1") {
-        photonicModule(scanner, collect)
+        photonicModule(scanner, collect, token = token)
     }.start(wait = true)
 }
 
 private fun freePort(): Int = ServerSocket(0).use { it.localPort }
+
+private fun generateToken(): String {
+    val bytes = ByteArray(32)
+    SecureRandom().nextBytes(bytes)
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+}

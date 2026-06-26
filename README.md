@@ -21,20 +21,26 @@ The two halves run independently. **Backend first:**
 
 ```bash
 cd backend
-mvn exec:java            # prints "PHOTONIC_PORT=<n>" then serves the API on 127.0.0.1
-# for a fixed dev port: PHOTONIC_PORT=8899 mvn exec:java
+mvn exec:java            # prints "PHOTONIC_PORT=<n>" and "PHOTONIC_TOKEN=<secret>", then serves on 127.0.0.1
+# for a stable dev port + token (so the browser client can reach it): 
+PHOTONIC_PORT=8899 PHOTONIC_TOKEN=photonic-dev mvn exec:java
 ```
+
+The API authenticates every request (except `/health`) against `PHOTONIC_TOKEN` via the
+`X-Photonic-Token` header — this stops other local processes / web pages from reaching your
+library. The packaged app generates a random token and hands it to the GUI automatically; for
+browser dev, launch the backend with the fixed `photonic-dev` token the dev client expects.
 
 Smoke-test it with curl (replace the port):
 
 ```bash
-curl localhost:8899/health
-curl -XPOST localhost:8899/roots/scan -H 'Content-Type: application/json' \
-     -d '{"path":"/path/to/photos"}'
-curl 'localhost:8899/timeline?bucket=month'
+curl localhost:8899/health                              # open, no token
+curl -H 'X-Photonic-Token: photonic-dev' -XPOST localhost:8899/roots/scan \
+     -H 'Content-Type: application/json' -d '{"path":"/path/to/photos"}'
+curl -H 'X-Photonic-Token: photonic-dev' 'localhost:8899/timeline?bucket=month'
 ```
 
-**Frontend** (talks to the backend on `VITE_BACKEND_PORT`, default 8899):
+**Frontend** (talks to the backend on `VITE_BACKEND_PORT`, default 8899; sends `VITE_BACKEND_TOKEN`, default `photonic-dev`):
 
 ```bash
 cd frontend
