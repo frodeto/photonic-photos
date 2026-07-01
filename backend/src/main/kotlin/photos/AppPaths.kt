@@ -25,8 +25,11 @@ object AppPaths {
         }
         Files.createDirectories(base)
         Files.createDirectories(base.resolve("thumbnails"))
+        Files.createDirectories(base.resolve("previews"))
         return base
     }
 
     fun thumbnailsDir(dataDir: Path): Path = dataDir.resolve("thumbnails")
+
+    fun previewsDir(dataDir: Path): Path = dataDir.resolve("previews")
 }

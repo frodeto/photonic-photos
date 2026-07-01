@@ -8,7 +8,7 @@ HTTP/JSON.
 ┌─────────────────────────── Photonic.app (.dmg) ───────────────────────────┐
 │   Tauri shell (Rust)                                                       │
 │   ├─ WebView UI  (Vite + React + TypeScript)                               │
-│   │     timeline histogram · zoom · hover-thumbnail · select · "copy out"  │
+│   │     timeline histogram · zoom · hover-meta · click-preview · select · "copy out"  │
 │   │     ──HTTP/JSON──▶ http://127.0.0.1:<port>                             │
 │   └─ spawns the backend sidecar, reads PHOTONIC_PORT from its stdout       │
 │                                                                            │
@@ -48,7 +48,8 @@ UI falls back to `VITE_BACKEND_PORT` (default 8899).
 | `GET` | `/timeline?from&to&bucket=day\|month\|year` | histogram buckets `{bucketStart, count}` |
 | `GET` | `/photos?from&to&limit&offset` | photo rows in a date range, ordered by date |
 | `GET` | `/photos/{id}` | full metadata |
-| `GET` | `/photos/{id}/thumbnail` | cached JPEG bytes |
+| `GET` | `/photos/{id}/thumbnail` | cached ~256px JPEG bytes (generated during scan) |
+| `GET` | `/photos/{id}/preview` | larger ~1024px JPEG for the lightbox (rendered + cached on first request) |
 | `POST` | `/collect` | `{photoIds[], targetFolder}` → copy originals out, returns counts |
 
 ## Data model (`backend/src/main/kotlin/photos/db/Tables.kt`)
@@ -72,16 +73,21 @@ WAL + `foreign_keys` are set via the JDBC URL (they can't be changed inside a tr
   is unavailable, batch reads return empty and the scanner falls back to filesystem metadata.
   *(Future optimization: `-stay_open True` for a single long-lived process per scan.)*
 - **ThumbnailService** (`thumbnail/ThumbnailService.kt`): JPEG → ImageIO; RAW → exiftool embedded
-  preview → ImageIO downscale to ~256px; written to the on-disk cache (kept out of the DB).
+  preview → ImageIO downscale; written to the on-disk cache (kept out of the DB). Two sizes share
+  one pipeline: ~256px **thumbnails** generated eagerly during the scan, and ~1024px **previews**
+  generated lazily on first `/preview` request (temp-file + atomic move, since requests are concurrent).
 - **CollectService** (`collect/CollectService.kt`): copies (never moves) selected originals into the
   target folder, de-duplicating collisions as `name (2).ext`.
 
 ## Frontend (`frontend/src/`)
 
 - `components/Timeline.tsx` — SVG bar histogram; click a bar to drill into that bucket.
-- `components/PhotoStrip.tsx` — thumbnails with hover-to-load preview and click-to-select.
+- `components/PhotoStrip.tsx` — thumbnails for the bucket load eagerly; **hover** reveals a metadata
+  overlay, the **corner checkbox** marks a photo for the copy set, and **clicking** opens the lightbox.
+- `components/Lightbox.tsx` — full-window ~1024px preview with metadata, arrow/Esc keyboard nav, and a
+  toggle to add the shown photo to the copy set.
 - `App.tsx` — folder picker (native dialog under Tauri), scan + progress polling, granularity
-  switch, selection, and copy-out.
+  switch, selection, copy-out, and lightbox state.
 
 ## Packaging
 

@@ -29,7 +29,11 @@ fun main() {
     Db.init(dataDir)
 
     val exif = ExifToolService()
-    val thumbs = ThumbnailService(AppPaths.thumbnailsDir(dataDir), exif)
+    val thumbs = ThumbnailService(
+        AppPaths.thumbnailsDir(dataDir),
+        exif,
+        previewsDir = AppPaths.previewsDir(dataDir),
+    )
     val scanner = Scanner(exif, thumbs)
     val collect = CollectService()
 
@@ -39,7 +43,7 @@ fun main() {
     val token = System.getenv("PHOTONIC_TOKEN")?.takeIf { it.isNotBlank() } ?: generateToken()
 
     val server = embeddedServer(Netty, port = port, host = "127.0.0.1") {
-        photonicModule(scanner, collect, token = token)
+        photonicModule(scanner, collect, thumbs, token = token)
     }
     // Emit the handshake only once the engine is bound and accepting connections, so the GUI
     // never fires its first request at a socket that isn't listening yet. Keep these the only

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type Bucket, type Photo, type TimelineBucket } from "./api/client";
 import Timeline from "./components/Timeline";
 import PhotoStrip from "./components/PhotoStrip";
+import Lightbox from "./components/Lightbox";
 
 function isTauri(): boolean {
   return typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
@@ -27,6 +28,7 @@ export default function App() {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [bucketTotal, setBucketTotal] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [lightbox, setLightbox] = useState<number | null>(null);
   const [status, setStatus] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
@@ -40,6 +42,7 @@ export default function App() {
     setSelectedBucket(null);
     setPhotos([]);
     setBucketTotal(0);
+    setLightbox(null);
     refreshTimeline(bucket).catch((e) => setStatus(String(e)));
   }, [bucket, refreshTimeline]);
 
@@ -70,6 +73,7 @@ export default function App() {
 
   const onSelectBucket = async (start: number) => {
     setSelectedBucket(start);
+    setLightbox(null);
     // The timeline bar's own count is the authoritative total for this bucket.
     setBucketTotal(buckets.find((b) => b.bucketStart === start)?.count ?? 0);
     try {
@@ -138,6 +142,11 @@ export default function App() {
           <button onClick={onCollect} disabled={busy || selectedIds.size === 0}>
             Copy {selectedIds.size > 0 ? `${selectedIds.size} ` : ""}to “look closer at”…
           </button>
+          {selectedIds.size > 0 && (
+            <button onClick={() => setSelectedIds(new Set())} disabled={busy}>
+              Clear selection
+            </button>
+          )}
         </div>
       </header>
 
@@ -146,7 +155,7 @@ export default function App() {
       </section>
 
       <section className="panel">
-        <PhotoStrip photos={photos} selectedIds={selectedIds} onToggle={toggle} />
+        <PhotoStrip photos={photos} selectedIds={selectedIds} onToggleSelect={toggle} onOpen={setLightbox} />
         {photos.length < bucketTotal && (
           <div className="more">
             Showing {photos.length} of {bucketTotal}.{" "}
@@ -158,6 +167,17 @@ export default function App() {
       </section>
 
       <footer className="status">{status || "Ready."}</footer>
+
+      {lightbox != null && photos[lightbox] && (
+        <Lightbox
+          photos={photos}
+          index={lightbox}
+          selectedIds={selectedIds}
+          onToggleSelect={toggle}
+          onNavigate={setLightbox}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }

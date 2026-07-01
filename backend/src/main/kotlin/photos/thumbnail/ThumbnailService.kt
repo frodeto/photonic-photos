@@ -5,30 +5,59 @@ import java.awt.RenderingHints
 import java.awt.geom.AffineTransform
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
+import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import javax.imageio.ImageIO
 import kotlin.io.path.extension
 
 /**
- * Generates ~256px JPEG thumbnails into the on-disk cache.
+ * Generates downscaled JPEGs into the on-disk cache.
  *  - JPEG sources are read directly via ImageIO.
  *  - RAW sources (CR2/DNG) use the embedded preview extracted by exiftool, then downscaled.
- * Returns the thumbnail path, or null if no thumbnail could be produced.
+ *
+ * Two sizes are produced from the same pipeline: a small [maxEdge] thumbnail for the strip
+ * (generated eagerly during the scan) and a larger [previewMaxEdge] preview for the lightbox
+ * (generated lazily on first request). Each returns its cache path, or null if nothing could
+ * be rendered.
  */
 class ThumbnailService(
     private val thumbnailsDir: Path,
     private val exif: ExifToolService,
     private val maxEdge: Int = 256,
+    private val previewsDir: Path = thumbnailsDir,
+    private val previewMaxEdge: Int = 1024,
 ) {
-    fun generate(file: Path, photoId: Int, orientation: Int? = null): Path? {
+    fun generate(file: Path, photoId: Int, orientation: Int? = null): Path? =
+        render(file, orientation, maxEdge, thumbnailsDir.resolve("$photoId.jpg"))
+
+    /**
+     * Returns the cached lightbox preview for [photoId], rendering it from [file] on the first
+     * request. Unlike thumbnails — written once by the single scan thread — previews are produced
+     * on demand from concurrent HTTP requests, so the write goes through a temp file + atomic move
+     * to avoid two requests corrupting one another's output for the same id. Returns null if no
+     * preview could be produced.
+     */
+    fun preview(file: Path, photoId: Int, orientation: Int? = null): Path? {
+        val out = previewsDir.resolve("$photoId.jpg")
+        if (Files.exists(out)) return out
+        return render(file, orientation, previewMaxEdge, out, atomic = true)
+    }
+
+    private fun render(file: Path, orientation: Int?, maxEdge: Int, out: Path, atomic: Boolean = false): Path? {
         val source: BufferedImage = readSource(file) ?: return null
         // ImageIO.read does not apply the EXIF Orientation tag, so rotate/flip here before scaling
         // — otherwise photos shot in portrait (or any rotated camera) render sideways.
         val oriented = orient(source, orientation)
         val scaled = scale(oriented, maxEdge)
-        val out = thumbnailsDir.resolve("$photoId.jpg")
         return try {
-            ImageIO.write(scaled, "jpg", out.toFile())
+            if (atomic) {
+                val tmp = Files.createTempFile(out.parent, ".${out.fileName}", ".tmp")
+                ImageIO.write(scaled, "jpg", tmp.toFile())
+                Files.move(tmp, out, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } else {
+                ImageIO.write(scaled, "jpg", out.toFile())
+            }
             out
         } catch (e: Exception) {
             null
