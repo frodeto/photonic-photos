@@ -36,6 +36,7 @@ import photos.model.ScanJobDto
 import photos.model.ScanRequest
 import photos.model.TimelineBucket
 import photos.scan.Scanner
+import photos.thumbnail.ThumbnailService
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
@@ -48,6 +49,7 @@ const val TOKEN_PARAM = "token"
 fun Application.photonicModule(
     scanner: Scanner,
     collect: CollectService,
+    thumbnails: ThumbnailService,
     token: String,
     zone: ZoneId = ZoneId.systemDefault(),
 ) {
@@ -182,6 +184,29 @@ fun Application.photonicModule(
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no thumbnail"))
             } else {
                 call.respondBytes(Files.readAllBytes(path), ContentType.Image.JPEG)
+            }
+        }
+
+        // Larger lightbox preview (~1024px). Unlike thumbnails it is not produced during the scan;
+        // it's rendered from the original on first request and cached to disk, so most clicks after
+        // the first are a plain file read.
+        get("/photos/{id}/preview") {
+            val id = call.intParam("id")
+            val row = transaction {
+                Photos.selectAll().where { Photos.id eq id }.firstOrNull()?.let {
+                    it[Photos.filePath] to it[Photos.orientation]
+                }
+            }
+            if (row == null) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no such photo"))
+                return@get
+            }
+            val (filePath, orientation) = row
+            val preview = thumbnails.preview(Path.of(filePath), id, orientation)
+            if (preview == null || !Files.exists(preview)) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no preview"))
+            } else {
+                call.respondBytes(Files.readAllBytes(preview), ContentType.Image.JPEG)
             }
         }
 

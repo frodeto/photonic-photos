@@ -155,6 +155,10 @@ export const api = {
   thumbnailUrl: async (id: number) =>
     `${await base()}/photos/${id}/thumbnail?token=${encodeURIComponent(await token())}`,
 
+  // Larger preview for the lightbox; rendered + cached on the backend on first request.
+  previewUrl: async (id: number) =>
+    `${await base()}/photos/${id}/preview?token=${encodeURIComponent(await token())}`,
+
   collect: (photoIds: number[], targetFolder: string) =>
     postJson<CollectResult>("/collect", { photoIds, targetFolder }),
 };
