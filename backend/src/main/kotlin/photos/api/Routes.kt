@@ -35,6 +35,7 @@ import photos.db.ScanJobs
 import photos.db.ScanRoots
 import photos.model.CollectRequest
 import photos.model.ErrorResponse
+import photos.model.HealthResponse
 import photos.model.PhotoDto
 import photos.model.RootDto
 import photos.model.ScanJobDto
@@ -50,6 +51,17 @@ import java.time.ZoneId
 
 const val TOKEN_HEADER = "X-Photonic-Token"
 const val TOKEN_PARAM = "token"
+
+/**
+ * Bumped whenever the API grows features the UI depends on for CORRECT results (not just new
+ * endpoints — silently-ignored query params are the dangerous case). The UI compares this
+ * against the generation it was built for and warns when the backend is older; in split dev
+ * (mvn + npm) the frontend hot-reloads while a long-running backend easily goes stale.
+ *
+ * 2: /timeline within+fill (drill-down); a stale backend ignores them and returns an
+ *    unbounded, unfilled histogram.
+ */
+const val API_GENERATION = 2
 
 fun Application.photonicModule(
     scanner: Scanner,
@@ -92,7 +104,7 @@ fun Application.photonicModule(
     }
 
     routing {
-        get("/health") { call.respond(mapOf("status" to "ok")) }
+        get("/health") { call.respond(HealthResponse(status = "ok", api = API_GENERATION)) }
 
         get("/roots") {
             val roots = transaction {

@@ -136,7 +136,17 @@ async function deleteJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * The API generation this UI was built against (backend: API_GENERATION in Routes.kt). In split
+ * dev (mvn + npm) the frontend hot-reloads while a long-running backend goes stale, and older
+ * backends silently ignore query params they don't know — e.g. the timeline drill-down's
+ * `within`/`fill`, turning a months-of-one-year request into an unbounded histogram.
+ */
+export const EXPECTED_API = 2;
+
 export const api = {
+  health: () => getJson<{ status: string; api?: number }>("/health"),
+
   roots: () => getJson<Root[]>("/roots"),
 
   startScan: (path: string) => postJson<{ jobId: number }>("/roots/scan", { path }),

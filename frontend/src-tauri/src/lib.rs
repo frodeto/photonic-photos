@@ -41,6 +41,11 @@ pub fn run() {
                 .sidecar("photonic-backend")
                 .expect("failed to create `photonic-backend` sidecar command");
 
+            // Belt and braces against orphaned backends: the backend watches its stdin
+            // (piped from this process) and exits on EOF, so even if the kill in the exit
+            // handler below never runs — e.g. this shell crashes — the JVM dies with us.
+            sidecar = sidecar.env("PHOTONIC_WATCH_STDIN", "1");
+
             // Resolve the bundled JRE, fat jar, and exiftool from the app's Resources
             // dir and hand them to the launcher script via the environment. Each is
             // best-effort: the launcher falls back to `java`/relative paths and the
@@ -89,6 +94,22 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_backend_port, get_backend_token])
-        .run(tauri::generate_context!())
-        .expect("error while running Photonic Photos");
+        .build(tauri::generate_context!())
+        .expect("error while building Photonic Photos")
+        .run(|app, event| {
+            // Tauri does not kill sidecars on its own; without this the backend JVM
+            // outlives the app. The launcher script `exec`s java, so the child PID we
+            // hold IS the JVM. SQLite (WAL) is crash-safe and scans are resumable, so a
+            // hard kill needs no graceful-shutdown dance.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(child) = app
+                    .state::<Mutex<Option<CommandChild>>>()
+                    .lock()
+                    .unwrap()
+                    .take()
+                {
+                    let _ = child.kill();
+                }
+            }
+        });
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Bucket, type Photo, type Root, type TimelineBucket } from "./api/client";
+import { api, EXPECTED_API, type Bucket, type Photo, type Root, type TimelineBucket } from "./api/client";
 import Timeline from "./components/Timeline";
 import PhotoStrip from "./components/PhotoStrip";
 import Lightbox from "./components/Lightbox";
@@ -62,6 +62,7 @@ export default function App() {
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [status, setStatus] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [staleBackend, setStaleBackend] = useState(false);
 
   const level = LEVELS[path.length];
 
@@ -88,6 +89,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Backends older than this UI ignore query params they don't know and silently return
+    // wrong data (e.g. an unbounded timeline) — surface that instead of misrendering.
+    api
+      .health()
+      .then((h) => setStaleBackend((h.api ?? 1) < EXPECTED_API))
+      .catch(() => {});
     loadTimeline([]).catch((e) => setStatus(String(e)));
     refreshRoots().catch((e) => setStatus(String(e)));
   }, [loadTimeline, refreshRoots]);
@@ -240,6 +247,13 @@ export default function App() {
         </div>
       </header>
 
+      {staleBackend && (
+        <div className="banner">
+          The backend is older than this UI and will return wrong timeline data — rebuild and
+          restart it (<code>cd backend && mvn compile exec:java</code>), then reload.
+        </div>
+      )}
+
       {roots.length > 0 && (
         <section className="panel roots">
           {roots.map((r) => (
@@ -267,8 +281,10 @@ export default function App() {
           <button className="crumb" onClick={goToAllYears} disabled={path.length === 0}>
             All years
           </button>
+          {/* Key on level+start: drilling into January makes the month's bucketStart equal
+              the year's, so start alone would collide. */}
           {path.map((start, i) => (
-            <span key={start} className="crumb-seg">
+            <span key={`${i}-${start}`} className="crumb-seg">
               <span className="crumb-sep">›</span>
               <button
                 className="crumb"
