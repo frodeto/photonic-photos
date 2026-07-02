@@ -21,15 +21,24 @@ import kotlin.io.path.extension
  * (generated lazily on first request). Each returns its cache path, or null if nothing could
  * be rendered.
  */
-class ThumbnailService(
+open class ThumbnailService(
     private val thumbnailsDir: Path,
     private val exif: ExifToolService,
     private val maxEdge: Int = 256,
     private val previewsDir: Path = thumbnailsDir,
     private val previewMaxEdge: Int = 1024,
 ) {
-    fun generate(file: Path, photoId: Int, orientation: Int? = null): Path? =
+    open fun generate(file: Path, photoId: Int, orientation: Int? = null): Path? =
         render(file, orientation, maxEdge, thumbnailsDir.resolve("$photoId.jpg"))
+
+    /**
+     * Deletes any cached thumbnail and preview for [photoId]. Called when the source file
+     * changed (the cached renders are stale) or disappeared (they're orphans).
+     */
+    fun invalidate(photoId: Int) {
+        runCatching { Files.deleteIfExists(thumbnailsDir.resolve("$photoId.jpg")) }
+        runCatching { Files.deleteIfExists(previewsDir.resolve("$photoId.jpg")) }
+    }
 
     /**
      * Returns the cached lightbox preview for [photoId], rendering it from [file] on the first

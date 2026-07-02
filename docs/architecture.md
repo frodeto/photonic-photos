@@ -43,7 +43,7 @@ UI falls back to `VITE_BACKEND_PORT` (default 8899).
 |---|---|---|
 | `GET` | `/health` | readiness |
 | `GET` | `/roots` | indexed roots + photo counts |
-| `POST` | `/roots/scan` | `{path}` → start/refresh an incremental scan, returns `{jobId}` |
+| `POST` | `/roots/scan` | `{path}` → start/refresh an incremental scan, returns `{jobId}` (the running job's id if that root is already being scanned) |
 | `GET` | `/scans/{id}` | scan progress (seen / indexed / errors / state) |
 | `GET` | `/timeline?from&to&bucket=day\|month\|year` | histogram buckets `{bucketStart, count}` |
 | `GET` | `/photos?from&to&limit&offset` | photo rows in a date range, ordered by date |
@@ -65,9 +65,15 @@ WAL + `foreign_keys` are set via the JDBC URL (they can't be changed inside a tr
 
 ## Behaviour
 
-- **Scanner** (`scan/Scanner.kt`): `Files.walk`, filters `jpg/jpeg/cr2/dng`. **Incremental** — a file
-  with matching `(size, mtime)` is skipped, so re-scans are cheap; new/changed files are (re)indexed.
-  Strictly read-only on originals. Long scans run on a background coroutine; the UI polls `/scans/{id}`.
+- **Scanner** (`scan/Scanner.kt`): `Files.walkFileTree` (unreadable files/folders are skipped and
+  counted as errors rather than aborting the scan), filters `jpg/jpeg/cr2/dng`. **Incremental** —
+  everything known under the root is loaded in one query; a file with matching `(size, mtime)` is
+  skipped, so re-scans are cheap. Changed files are re-indexed **in place, keeping their photo id
+  stable** (so UI selections and cached renders stay valid), and rows whose files have verifiably
+  disappeared are removed along with their cached thumbnails/previews. Only one scan runs per root
+  at a time — a request for a busy root returns the running job's id. Strictly read-only on
+  originals. Long scans run on a background coroutine; the UI polls `/scans/{id}` (`filesSeen`
+  updates during discovery, then `filesIndexed` during indexing).
 - **ExifToolService** (`scan/ExifToolService.kt`): drives exiftool in **batches** (`-json -n`, one
   process per chunk of files, not per photo). Resolves the binary from `PHOTONIC_EXIFTOOL`. If exiftool
   is unavailable, batch reads return empty and the scanner falls back to filesystem metadata.
@@ -124,5 +130,4 @@ self-contained distribution (script + `lib/`) that runs on the system `/usr/bin/
 
 - `-stay_open` exiftool mode; content-hash for move/duplicate detection.
 - Optional startup token (`X-Photonic-Token`) enforced on all routes but `/health`.
-- Mark rows whose files have disappeared; surface them in the UI.
 - Map view for GPS-tagged photos; richer photo-detail panel.
