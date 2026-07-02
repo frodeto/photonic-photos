@@ -12,6 +12,7 @@ import photos.thumbnail.ThumbnailService
 import java.net.ServerSocket
 import java.security.SecureRandom
 import java.util.Base64
+import kotlin.system.exitProcess
 
 /**
  * Backend entrypoint. Picks a free loopback port, then serves the API and — only once the
@@ -25,6 +26,27 @@ import java.util.Base64
  * development (the browser dev client reads VITE_BACKEND_TOKEN, default "photonic-dev").
  */
 fun main() {
+    // When launched as a Tauri sidecar (the shell sets PHOTONIC_WATCH_STDIN=1), exit as soon
+    // as stdin reaches EOF: the pipe closes when the GUI quits or crashes, so the backend can
+    // never outlive it — even if the shell's kill-on-exit never fired. Opt-in via env so
+    // `mvn exec:java` / nohup dev runs (where stdin may be closed from the start) are unaffected.
+    if (System.getenv("PHOTONIC_WATCH_STDIN") == "1") {
+        Thread {
+            try {
+                while (System.`in`.read() != -1) {
+                    // discard; only EOF matters
+                }
+            } catch (_: Exception) {
+                // treat a broken pipe like EOF
+            }
+            exitProcess(0)
+        }.apply {
+            isDaemon = true
+            name = "stdin-watchdog"
+            start()
+        }
+    }
+
     val dataDir = AppPaths.dataDir()
     Db.init(dataDir)
 

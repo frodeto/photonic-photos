@@ -23,6 +23,11 @@ The launcher must run java with `-Djava.awt.headless=true`
 for **offscreen** thumbnailing, so headless keeps thumbnails working while stopping the JVM from
 registering as a GUI app and showing a Java icon in the macOS Dock.
 
+The `exec` is load-bearing: it makes the sidecar child PID *be* the JVM, so the Rust shell's
+kill-on-exit (`RunEvent::Exit` in `../src/lib.rs`) terminates the backend and not just a wrapper
+shell. (As a second line of defense the backend also exits on stdin EOF when the shell sets
+`PHOTONIC_WATCH_STDIN=1`.)
+
 **Path B — GraalVM native image (optimization):**
 `native-image -jar photonic-backend-0.1.0.jar photonic-backend-<triple>` → a true single binary that
 drops straight in here.
