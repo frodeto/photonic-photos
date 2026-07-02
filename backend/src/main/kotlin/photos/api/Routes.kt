@@ -15,6 +15,7 @@ import io.ktor.server.request.receive
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondFile
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
@@ -22,7 +23,9 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -106,6 +109,31 @@ fun Application.photonicModule(
             val req = call.receive<ScanRequest>()
             val jobId = scanner.startScan(req.path)
             call.respond(HttpStatusCode.Accepted, mapOf("jobId" to jobId))
+        }
+
+        // Forget an indexed root: drops its photo rows and their cached renders. Originals on
+        // disk are untouched — this only removes them from the index.
+        delete("/roots/{id}") {
+            val id = call.intParam("id")
+            if (scanner.isScanning(id)) {
+                call.respond(HttpStatusCode.Conflict, ErrorResponse("a scan is running for this root"))
+                return@delete
+            }
+            val photoIds = transaction {
+                ScanRoots.selectAll().where { ScanRoots.id eq id }.firstOrNull()
+                    ?: return@transaction null
+                val ids = Photos.select(Photos.id).where { Photos.rootId eq id }
+                    .map { it[Photos.id].value }
+                Photos.deleteWhere { Photos.rootId eq id }
+                ScanRoots.deleteWhere { ScanRoots.id eq id }
+                ids
+            }
+            if (photoIds == null) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no such root"))
+            } else {
+                photoIds.forEach { thumbnails.invalidate(it) }
+                call.respond(mapOf("removedPhotos" to photoIds.size))
+            }
         }
 
         get("/scans/{id}") {
