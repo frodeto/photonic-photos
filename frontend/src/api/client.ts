@@ -146,10 +146,15 @@ export const api = {
 
   scanStatus: (jobId: number) => getJson<ScanJob>(`/scans/${jobId}`),
 
-  timeline: (bucket: Bucket, from?: number, to?: number) => {
+  // `within` + `from` (a parent-bucket start) lets the backend derive the exclusive end with
+  // its own bucketing — "months of this year" aligns exactly with the year bar clicked.
+  // `fill` also returns zero-count buckets, so gaps render as gaps (linear time axis).
+  timeline: (bucket: Bucket, opts?: { from?: number; to?: number; within?: Bucket; fill?: boolean }) => {
     const qs = new URLSearchParams({ bucket });
-    if (from != null) qs.set("from", String(from));
-    if (to != null) qs.set("to", String(to));
+    if (opts?.from != null) qs.set("from", String(opts.from));
+    if (opts?.to != null) qs.set("to", String(opts.to));
+    if (opts?.within) qs.set("within", opts.within);
+    if (opts?.fill) qs.set("fill", "1");
     return getJson<TimelineBucket[]>(`/timeline?${qs}`);
   },
 

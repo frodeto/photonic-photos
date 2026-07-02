@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Bucket, type Photo, type Root, type TimelineBucket } from "./api/client";
 import Timeline from "./components/Timeline";
 import PhotoStrip from "./components/PhotoStrip";
@@ -33,20 +33,54 @@ const PAGE_SIZE = 500;
 /** Refresh the timeline every Nth scan-status poll (polls are 500 ms apart). */
 const TIMELINE_REFRESH_EVERY = 4;
 
+/**
+ * Histogram drill-down levels. `path` below holds the chosen bucket starts on the way down
+ * (path.length 0 → all years, 1 → months of path[0], 2 → days of path[1]).
+ */
+const LEVELS: Bucket[] = ["year", "month", "day"];
+
+function crumbLabel(ms: number, level: Bucket): string {
+  const d = new Date(ms);
+  if (level === "year") return String(d.getFullYear());
+  return d.toLocaleString(undefined, { month: "long", year: "numeric" });
+}
+
+/** The photo strip's query context: which bucket it shows, at which level, and its total. */
+interface StripContext {
+  from: number;
+  level: Bucket;
+  total: number;
+}
+
 export default function App() {
-  const [bucket, setBucket] = useState<Bucket>("year");
   const [buckets, setBuckets] = useState<TimelineBucket[]>([]);
   const [roots, setRoots] = useState<Root[]>([]);
-  const [selectedBucket, setSelectedBucket] = useState<number | null>(null);
+  const [path, setPath] = useState<number[]>([]);
+  const [strip, setStrip] = useState<StripContext | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
-  const [bucketTotal, setBucketTotal] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [status, setStatus] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
-  const refreshTimeline = useCallback(async (b: Bucket) => {
-    setBuckets(await api.timeline(b));
+  const level = LEVELS[path.length];
+
+  // Long-running scan loops refresh the timeline; a ref keeps them pointed at wherever the
+  // user has navigated to since the scan started.
+  const pathRef = useRef(path);
+  useEffect(() => {
+    pathRef.current = path;
+  }, [path]);
+
+  const loadTimeline = useCallback(async (p: number[]) => {
+    const lvl = LEVELS[p.length];
+    const opts =
+      p.length === 0
+        ? { fill: true }
+        : { from: p[p.length - 1], within: LEVELS[p.length - 1], fill: true };
+    const b = await api.timeline(lvl, opts);
+    setBuckets(b);
+    return b;
   }, []);
 
   const refreshRoots = useCallback(async () => {
@@ -54,24 +88,41 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    loadTimeline([]).catch((e) => setStatus(String(e)));
     refreshRoots().catch((e) => setStatus(String(e)));
-  }, [refreshRoots]);
+  }, [loadTimeline, refreshRoots]);
 
-  useEffect(() => {
-    // Changing granularity invalidates any drill-in: a selected start is no longer a valid
-    // bucket boundary, so clear it rather than paginate against a mismatched range.
-    setSelectedBucket(null);
-    setPhotos([]);
-    setBucketTotal(0);
+  /**
+   * Show a bucket's photos in the strip and — above day level — zoom the histogram into it.
+   * [prefix] is the path *above* the clicked bucket (the current path for bar clicks, a
+   * truncated one for breadcrumb clicks); [barCount] is the clicked bar's own count, used as
+   * the strip total at day level where no child histogram exists to sum.
+   */
+  const openBucket = async (prefix: number[], start: number, barCount?: number) => {
+    const levelIdx = prefix.length;
+    const lvl = LEVELS[levelIdx];
+    const newPath = levelIdx < LEVELS.length - 1 ? [...prefix, start] : prefix;
+    setPath(newPath);
     setLightbox(null);
-    refreshTimeline(bucket).catch((e) => setStatus(String(e)));
-  }, [bucket, refreshTimeline]);
+    try {
+      let total = barCount ?? 0;
+      if (levelIdx < LEVELS.length - 1) {
+        const kids = await loadTimeline(newPath);
+        total = kids.reduce((sum, b) => sum + b.count, 0);
+      }
+      setStrip({ from: start, level: lvl, total });
+      setPhotos(await api.photos({ from: start, bucket: lvl, limit: PAGE_SIZE }));
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
 
-  const clearDrillIn = () => {
-    setSelectedBucket(null);
+  const goToAllYears = () => {
+    setPath([]);
+    setStrip(null);
     setPhotos([]);
-    setBucketTotal(0);
     setLightbox(null);
+    loadTimeline([]).catch((e) => setStatus(String(e)));
   };
 
   const scanFolder = async (folder: string) => {
@@ -93,10 +144,10 @@ export default function App() {
             ? `Scanning … discovering files, ${job.filesSeen} found${errs}`
             : `Scanning … ${job.filesIndexed}/${job.filesSeen} indexed${errs}`,
         );
-        if (poll % TIMELINE_REFRESH_EVERY === 0) refreshTimeline(bucket).catch(() => {});
+        if (poll % TIMELINE_REFRESH_EVERY === 0) loadTimeline(pathRef.current).catch(() => {});
         await new Promise((r) => setTimeout(r, 500));
       }
-      await refreshTimeline(bucket);
+      await loadTimeline(pathRef.current);
       await refreshRoots();
     } catch (e) {
       setStatus(`Scan failed: ${e}`);
@@ -120,10 +171,9 @@ export default function App() {
     try {
       const res = await api.deleteRoot(root.id);
       setStatus(`Forgot ${root.path} (${res.removedPhotos} photos removed from the index)`);
-      clearDrillIn();
       setSelectedIds(new Set());
+      goToAllYears();
       await refreshRoots();
-      await refreshTimeline(bucket);
     } catch (e) {
       setStatus(`Remove failed: ${e}`);
     } finally {
@@ -131,24 +181,12 @@ export default function App() {
     }
   };
 
-  const onSelectBucket = async (start: number) => {
-    setSelectedBucket(start);
-    setLightbox(null);
-    // The timeline bar's own count is the authoritative total for this bucket.
-    setBucketTotal(buckets.find((b) => b.bucketStart === start)?.count ?? 0);
-    try {
-      setPhotos(await api.photos({ from: start, bucket, limit: PAGE_SIZE }));
-    } catch (e) {
-      setStatus(String(e));
-    }
-  };
-
   const loadMore = async () => {
-    if (selectedBucket == null) return;
+    if (!strip) return;
     try {
       const more = await api.photos({
-        from: selectedBucket,
-        bucket,
+        from: strip.from,
+        bucket: strip.level,
         limit: PAGE_SIZE,
         offset: photos.length,
       });
@@ -191,14 +229,6 @@ export default function App() {
           <button onClick={onScan} disabled={busy}>
             Add / rescan folder…
           </button>
-          <label>
-            Granularity{" "}
-            <select value={bucket} onChange={(e) => setBucket(e.target.value as Bucket)}>
-              <option value="year">Year</option>
-              <option value="month">Month</option>
-              <option value="day">Day</option>
-            </select>
-          </label>
           <button onClick={onCollect} disabled={busy || selectedIds.size === 0}>
             Copy {selectedIds.size > 0 ? `${selectedIds.size} ` : ""}to “look closer at”…
           </button>
@@ -233,16 +263,41 @@ export default function App() {
       )}
 
       <section className="panel">
-        <Timeline buckets={buckets} bucket={bucket} selected={selectedBucket} onSelect={onSelectBucket} />
+        <div className="crumbs">
+          <button className="crumb" onClick={goToAllYears} disabled={path.length === 0}>
+            All years
+          </button>
+          {path.map((start, i) => (
+            <span key={start} className="crumb-seg">
+              <span className="crumb-sep">›</span>
+              <button
+                className="crumb"
+                onClick={() => openBucket(path.slice(0, i), start)}
+                disabled={i === path.length - 1}
+              >
+                {crumbLabel(start, LEVELS[i])}
+              </button>
+            </span>
+          ))}
+          <span className="crumb-hint">
+            {level === "day" ? "Click a day to see its photos" : "Click a bar to zoom in"}
+          </span>
+        </div>
+        <Timeline
+          buckets={buckets}
+          level={level}
+          selected={strip && strip.level === level ? strip.from : null}
+          onSelect={(start, count) => openBucket(path, start, count)}
+        />
       </section>
 
       <section className="panel">
         <PhotoStrip photos={photos} selectedIds={selectedIds} onToggleSelect={toggle} onOpen={setLightbox} />
-        {photos.length < bucketTotal && (
+        {strip != null && photos.length < strip.total && (
           <div className="more">
-            Showing {photos.length} of {bucketTotal}.{" "}
+            Showing {photos.length} of {strip.total}.{" "}
             <button onClick={loadMore} disabled={busy}>
-              Load {Math.min(PAGE_SIZE, bucketTotal - photos.length)} more
+              Load {Math.min(PAGE_SIZE, strip.total - photos.length)} more
             </button>
           </div>
         )}
