@@ -63,6 +63,9 @@ class Scanner(
     /** What we already know about an indexed file, enough to decide if it needs re-indexing. */
     private data class KnownRow(val id: Int, val size: Long, val mtime: Long)
 
+    /** True while a scan job is running for [rootId] (e.g. to refuse deleting the root mid-scan). */
+    fun isScanning(rootId: Int): Boolean = runningRoots.containsKey(rootId)
+
     /**
      * Registers/refreshes the root and returns the scan job id immediately. If a scan is
      * already running for this root, returns that job's id instead of starting another.

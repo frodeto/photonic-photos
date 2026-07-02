@@ -127,10 +127,22 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function deleteJson<T>(path: string): Promise<T> {
+  const res = await fetch((await base()) + path, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
 export const api = {
   roots: () => getJson<Root[]>("/roots"),
 
   startScan: (path: string) => postJson<{ jobId: number }>("/roots/scan", { path }),
+
+  // Forgets the root and its indexed photos (originals on disk are untouched).
+  deleteRoot: (id: number) => deleteJson<{ removedPhotos: number }>(`/roots/${id}`),
 
   scanStatus: (jobId: number) => getJson<ScanJob>(`/scans/${jobId}`),
 
