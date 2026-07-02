@@ -1,18 +1,20 @@
 package photos.api
 
-import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
 import io.ktor.server.application.install
+import io.ktor.server.application.log
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.path
 import io.ktor.server.request.receive
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
-import io.ktor.server.response.respondBytes
+import io.ktor.server.response.respondFile
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
@@ -75,11 +77,13 @@ fun Application.photonicModule(
         }
     }
 
+    val log = this.log
     install(StatusPages) {
         exception<IllegalArgumentException> { call, cause ->
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(cause.message ?: "bad request"))
         }
         exception<Throwable> { call, cause ->
+            log.error("unhandled error on ${call.request.path()}", cause)
             call.respond(HttpStatusCode.InternalServerError, ErrorResponse(cause.message ?: "internal error"))
         }
     }
@@ -183,7 +187,7 @@ fun Application.photonicModule(
             if (path == null || !Files.exists(path)) {
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no thumbnail"))
             } else {
-                call.respondBytes(Files.readAllBytes(path), ContentType.Image.JPEG)
+                call.respondCachedImage(path)
             }
         }
 
@@ -206,7 +210,7 @@ fun Application.photonicModule(
             if (preview == null || !Files.exists(preview)) {
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no preview"))
             } else {
-                call.respondBytes(Files.readAllBytes(preview), ContentType.Image.JPEG)
+                call.respondCachedImage(preview)
             }
         }
 
@@ -240,11 +244,23 @@ internal fun bucketEnd(epochMs: Long, bucket: String, zone: ZoneId): Long {
     return nextStart.atStartOfDay(zone).toInstant().toEpochMilli()
 }
 
+/**
+ * Serves a cached render (thumbnail/preview) with aggressive client caching. The client embeds
+ * the photo's fileMtime in the URL (`v=` param), so the URL changes whenever the source file is
+ * re-indexed — which makes an immutable max-age safe and spares the WebView a request per image
+ * on every strip render.
+ */
+private suspend fun io.ktor.server.application.ApplicationCall.respondCachedImage(path: Path) {
+    response.header(HttpHeaders.CacheControl, "private, max-age=31536000, immutable")
+    respondFile(path.toFile())
+}
+
 private fun org.jetbrains.exposed.sql.ResultRow.toPhotoDto(): PhotoDto = PhotoDto(
     id = this[Photos.id].value,
     filePath = this[Photos.filePath],
     fileName = this[Photos.fileName],
     fileSize = this[Photos.fileSize],
+    fileMtime = this[Photos.fileMtime],
     createdDate = this[Photos.createdDate],
     cameraMake = this[Photos.cameraMake],
     cameraModel = this[Photos.cameraModel],

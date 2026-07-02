@@ -22,6 +22,24 @@
         <main.class>photos.ApplicationKt</main.class>
     </properties>
 
+    <dependencyManagement>
+        <dependencies>
+            <!-- Ktor 3 streams file responses via kotlinx-io >= 0.5 (kotlinx.io.unsafe.*), but
+                 kotlinx-serialization-json-io pulls in 0.4.0, which wins dependency mediation and
+                 breaks respondFile at runtime (ClassNotFoundException). Pin the version Ktor needs. -->
+            <dependency>
+                <groupId>org.jetbrains.kotlinx</groupId>
+                <artifactId>kotlinx-io-core-jvm</artifactId>
+                <version>0.5.4</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jetbrains.kotlinx</groupId>
+                <artifactId>kotlinx-io-bytestring-jvm</artifactId>
+                <version>0.5.4</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
