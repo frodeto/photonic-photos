@@ -1,18 +1,21 @@
 package photos.api
 
-import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
 import io.ktor.server.application.install
+import io.ktor.server.application.log
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.path
 import io.ktor.server.request.receive
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
-import io.ktor.server.response.respondBytes
+import io.ktor.server.response.respondFile
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
@@ -20,7 +23,9 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -75,11 +80,13 @@ fun Application.photonicModule(
         }
     }
 
+    val log = this.log
     install(StatusPages) {
         exception<IllegalArgumentException> { call, cause ->
             call.respond(HttpStatusCode.BadRequest, ErrorResponse(cause.message ?: "bad request"))
         }
         exception<Throwable> { call, cause ->
+            log.error("unhandled error on ${call.request.path()}", cause)
             call.respond(HttpStatusCode.InternalServerError, ErrorResponse(cause.message ?: "internal error"))
         }
     }
@@ -102,6 +109,31 @@ fun Application.photonicModule(
             val req = call.receive<ScanRequest>()
             val jobId = scanner.startScan(req.path)
             call.respond(HttpStatusCode.Accepted, mapOf("jobId" to jobId))
+        }
+
+        // Forget an indexed root: drops its photo rows and their cached renders. Originals on
+        // disk are untouched — this only removes them from the index.
+        delete("/roots/{id}") {
+            val id = call.intParam("id")
+            if (scanner.isScanning(id)) {
+                call.respond(HttpStatusCode.Conflict, ErrorResponse("a scan is running for this root"))
+                return@delete
+            }
+            val photoIds = transaction {
+                ScanRoots.selectAll().where { ScanRoots.id eq id }.firstOrNull()
+                    ?: return@transaction null
+                val ids = Photos.select(Photos.id).where { Photos.rootId eq id }
+                    .map { it[Photos.id].value }
+                Photos.deleteWhere { Photos.rootId eq id }
+                ScanRoots.deleteWhere { ScanRoots.id eq id }
+                ids
+            }
+            if (photoIds == null) {
+                call.respond(HttpStatusCode.NotFound, ErrorResponse("no such root"))
+            } else {
+                photoIds.forEach { thumbnails.invalidate(it) }
+                call.respond(mapOf("removedPhotos" to photoIds.size))
+            }
         }
 
         get("/scans/{id}") {
@@ -183,7 +215,7 @@ fun Application.photonicModule(
             if (path == null || !Files.exists(path)) {
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no thumbnail"))
             } else {
-                call.respondBytes(Files.readAllBytes(path), ContentType.Image.JPEG)
+                call.respondCachedImage(path)
             }
         }
 
@@ -206,7 +238,7 @@ fun Application.photonicModule(
             if (preview == null || !Files.exists(preview)) {
                 call.respond(HttpStatusCode.NotFound, ErrorResponse("no preview"))
             } else {
-                call.respondBytes(Files.readAllBytes(preview), ContentType.Image.JPEG)
+                call.respondCachedImage(preview)
             }
         }
 
@@ -240,11 +272,23 @@ internal fun bucketEnd(epochMs: Long, bucket: String, zone: ZoneId): Long {
     return nextStart.atStartOfDay(zone).toInstant().toEpochMilli()
 }
 
+/**
+ * Serves a cached render (thumbnail/preview) with aggressive client caching. The client embeds
+ * the photo's fileMtime in the URL (`v=` param), so the URL changes whenever the source file is
+ * re-indexed — which makes an immutable max-age safe and spares the WebView a request per image
+ * on every strip render.
+ */
+private suspend fun io.ktor.server.application.ApplicationCall.respondCachedImage(path: Path) {
+    response.header(HttpHeaders.CacheControl, "private, max-age=31536000, immutable")
+    respondFile(path.toFile())
+}
+
 private fun org.jetbrains.exposed.sql.ResultRow.toPhotoDto(): PhotoDto = PhotoDto(
     id = this[Photos.id].value,
     filePath = this[Photos.filePath],
     fileName = this[Photos.fileName],
     fileSize = this[Photos.fileSize],
+    fileMtime = this[Photos.fileMtime],
     createdDate = this[Photos.createdDate],
     cameraMake = this[Photos.cameraMake],
     cameraModel = this[Photos.cameraModel],
