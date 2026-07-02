@@ -60,6 +60,41 @@ button:disabled {
   padding: 10px;
 }
 
+/* Indexed roots: one compact row per folder with rescan/forget actions. */
+.roots {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+}
+
+.root-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.root-path {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* ellipsis at the start: the folder name (end of the path) matters most */
+  text-align: left;
+}
+
+.root-meta {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.root-row button {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
 .timeline {
   width: 100%;
   height: auto;

@@ -44,12 +44,17 @@ UI falls back to `VITE_BACKEND_PORT` (default 8899).
 | `GET` | `/health` | readiness |
 | `GET` | `/roots` | indexed roots + photo counts |
 | `POST` | `/roots/scan` | `{path}` → start/refresh an incremental scan, returns `{jobId}` (the running job's id if that root is already being scanned) |
+| `DELETE` | `/roots/{id}` | forget a root: removes its rows + cached renders (originals untouched); `409` while a scan runs |
 | `GET` | `/scans/{id}` | scan progress (seen / indexed / errors / state) |
 | `GET` | `/timeline?from&to&bucket=day\|month\|year` | histogram buckets `{bucketStart, count}` |
 | `GET` | `/photos?from&to&limit&offset` | photo rows in a date range, ordered by date |
 | `GET` | `/photos/{id}` | full metadata |
-| `GET` | `/photos/{id}/thumbnail` | cached ~256px JPEG bytes (generated during scan) |
+| `GET` | `/photos/{id}/thumbnail` | cached ~256px JPEG (generated during scan) |
 | `GET` | `/photos/{id}/preview` | larger ~1024px JPEG for the lightbox (rendered + cached on first request) |
+
+Thumbnails/previews are served with `Cache-Control: … immutable`; the client appends the photo's
+`fileMtime` as a `v=` query param, so the URL — and thus the cache entry — changes whenever the
+source file is re-indexed. The WebView never refetches an unchanged image.
 | `POST` | `/collect` | `{photoIds[], targetFolder}` → copy originals out, returns counts |
 
 ## Data model (`backend/src/main/kotlin/photos/db/Tables.kt`)
@@ -73,7 +78,9 @@ WAL + `foreign_keys` are set via the JDBC URL (they can't be changed inside a tr
   disappeared are removed along with their cached thumbnails/previews. Only one scan runs per root
   at a time — a request for a busy root returns the running job's id. Strictly read-only on
   originals. Long scans run on a background coroutine; the UI polls `/scans/{id}` (`filesSeen`
-  updates during discovery, then `filesIndexed` during indexing).
+  updates during discovery, then `filesIndexed` during indexing). Within each exiftool batch,
+  files are indexed concurrently on a bounded dispatcher (min(cores, 8)) — thumbnail rendering
+  dominates scan time and is independent per file.
 - **ExifToolService** (`scan/ExifToolService.kt`): drives exiftool in **batches** (`-json -n`, one
   process per chunk of files, not per photo). Resolves the binary from `PHOTONIC_EXIFTOOL`. If exiftool
   is unavailable, batch reads return empty and the scanner falls back to filesystem metadata.
@@ -92,8 +99,9 @@ WAL + `foreign_keys` are set via the JDBC URL (they can't be changed inside a tr
   overlay, the **corner checkbox** marks a photo for the copy set, and **clicking** opens the lightbox.
 - `components/Lightbox.tsx` — full-window ~1024px preview with metadata, arrow/Esc keyboard nav, and a
   toggle to add the shown photo to the copy set.
-- `App.tsx` — folder picker (native dialog under Tauri), scan + progress polling, granularity
-  switch, selection, copy-out, and lightbox state.
+- `App.tsx` — folder picker (native dialog under Tauri), scan + progress polling (the timeline
+  refreshes live while a scan runs), a roots panel listing indexed folders with per-root
+  rescan/forget actions, granularity switch, selection, copy-out, and lightbox state.
 
 ## Packaging
 

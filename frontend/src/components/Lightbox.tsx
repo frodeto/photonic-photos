@@ -23,11 +23,11 @@ export default function Lightbox({ photos, index, selectedIds, onToggleSelect, o
   useEffect(() => {
     let active = true;
     setUrl(null);
-    if (photo?.hasThumbnail) api.previewUrl(photo.id).then((u) => active && setUrl(u));
+    if (photo?.hasThumbnail) api.previewUrl(photo).then((u) => active && setUrl(u));
     return () => {
       active = false;
     };
-  }, [photo?.id, photo?.hasThumbnail]);
+  }, [photo]);
 
   // Escape closes; arrows step through the strip (clamped at the ends).
   useEffect(() => {

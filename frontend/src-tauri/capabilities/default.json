@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main window: spawn the backend sidecar and open a folder dialog.",
+  "description": "Capabilities for the main window: spawn the backend sidecar and open folder/confirm dialogs.",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "dialog:allow-open",
+    "dialog:allow-confirm",
     {
       "identifier": "shell:allow-execute",
       "allow": [
