@@ -34,6 +34,8 @@ data class PhotoDto(
     val filePath: String,
     val fileName: String,
     val fileSize: Long,
+    // Used by the client as a cache-busting `v=` param on thumbnail/preview URLs.
+    val fileMtime: Long = 0,
     val createdDate: Long,
     val cameraMake: String? = null,
     val cameraModel: String? = null,

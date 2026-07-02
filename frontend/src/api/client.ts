@@ -14,6 +14,7 @@ export interface Photo {
   filePath: string;
   fileName: string;
   fileSize: number;
+  fileMtime: number;
   createdDate: number;
   cameraMake?: string;
   cameraModel?: string;
@@ -152,12 +153,14 @@ export const api = {
   },
 
   // <img> can't send headers, so the token rides along as a query param (the backend accepts both).
-  thumbnailUrl: async (id: number) =>
-    `${await base()}/photos/${id}/thumbnail?token=${encodeURIComponent(await token())}`,
+  // `v` (the file's mtime) makes the URL change when the source file is re-indexed, so the
+  // backend can serve these with immutable cache headers and the WebView never refetches.
+  thumbnailUrl: async (photo: Photo) =>
+    `${await base()}/photos/${photo.id}/thumbnail?token=${encodeURIComponent(await token())}&v=${photo.fileMtime}`,
 
   // Larger preview for the lightbox; rendered + cached on the backend on first request.
-  previewUrl: async (id: number) =>
-    `${await base()}/photos/${id}/preview?token=${encodeURIComponent(await token())}`,
+  previewUrl: async (photo: Photo) =>
+    `${await base()}/photos/${photo.id}/preview?token=${encodeURIComponent(await token())}&v=${photo.fileMtime}`,
 
   collect: (photoIds: number[], targetFolder: string) =>
     postJson<CollectResult>("/collect", { photoIds, targetFolder }),

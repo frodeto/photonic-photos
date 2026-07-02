@@ -37,11 +37,11 @@ function Thumb({
 
   useEffect(() => {
     let active = true;
-    if (photo.hasThumbnail) api.thumbnailUrl(photo.id).then((u) => active && setUrl(u));
+    if (photo.hasThumbnail) api.thumbnailUrl(photo).then((u) => active && setUrl(u));
     return () => {
       active = false;
     };
-  }, [photo.id, photo.hasThumbnail]);
+  }, [photo]);
 
   const exposure = exposureLine(photo);
 

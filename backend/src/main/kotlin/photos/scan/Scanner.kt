@@ -3,7 +3,11 @@ package photos.scan
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insertAndGetId
@@ -47,6 +51,12 @@ class Scanner(
     private val batchSize = 100
     private val seenUpdateEvery = 500
 
+    // Thumbnail rendering dominates scan time and is independent per file; bound the fan-out
+    // so RAW files don't spawn unbounded exiftool processes.
+    private val renderDispatcher = Dispatchers.IO.limitedParallelism(
+        Runtime.getRuntime().availableProcessors().coerceIn(2, 8),
+    )
+
     /** rootId → jobId of the scan currently running for that root. */
     private val runningRoots = ConcurrentHashMap<Int, Int>()
 
@@ -85,14 +95,14 @@ class Scanner(
         if (!claimed) return jobId
 
         if (blocking) {
-            runScan(rootId, root, jobId)
+            runBlocking { runScan(rootId, root, jobId) }
         } else {
             scope.launch { runScan(rootId, root, jobId) }
         }
         return jobId
     }
 
-    private fun runScan(rootId: Int, root: Path, jobId: Int) {
+    private suspend fun runScan(rootId: Int, root: Path, jobId: Int) {
         try {
             val (files, walkErrors) = walk(root, jobId)
             setSeen(jobId, files.size)
@@ -121,15 +131,23 @@ class Scanner(
             var errors = walkErrors
             for (chunk in toIndex.chunked(batchSize)) {
                 val exifMap = exif.readBatch(chunk.map { it.first })
-                for ((file, existingId) in chunk) {
-                    try {
-                        indexOne(rootId, file, exifMap[file], existingId)
-                        indexed++
-                    } catch (e: Exception) {
-                        log.warn("failed to index $file: ${e.message}")
-                        errors++
-                    }
+                // Index the chunk concurrently — rendering is CPU-bound and per-file independent.
+                // The short SQLite writes serialize fine across threads (WAL + busy_timeout).
+                val failed = coroutineScope {
+                    chunk.map { (file, existingId) ->
+                        async(renderDispatcher) {
+                            try {
+                                indexOne(rootId, file, exifMap[file], existingId)
+                                false
+                            } catch (e: Exception) {
+                                log.warn("failed to index $file: ${e.message}")
+                                true
+                            }
+                        }
+                    }.awaitAll().count { it }
                 }
+                indexed += chunk.size - failed
+                errors += failed
                 setProgress(jobId, indexed, errors)
             }
 
