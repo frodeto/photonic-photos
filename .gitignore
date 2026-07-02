@@ -12,6 +12,8 @@ frontend/src-tauri/gen/
 frontend/src-tauri/binaries/photonic-backend*
 frontend/src-tauri/resources/exiftool/exiftool
 frontend/src-tauri/resources/exiftool/lib/
+frontend/src-tauri/resources/runtime/
+frontend/src-tauri/resources/photonic-backend-*.jar
 
 # OS / editor
 .DS_Store
