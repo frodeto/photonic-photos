@@ -12,6 +12,20 @@ editing elsewhere.
 > no prebuilt binaries yet. Everything runs locally; your photos never leave your machine and the
 > originals are never modified.
 
+## Why not just use iCloud or Google Photos?
+
+Cloud photo services give you a timeline too — in exchange for uploading your entire library to
+someone else's computers. Photonic Photos gives you the overview **without handing your photos to
+Apple, Google, or any other tech giant**:
+
+- **Your photos stay exactly where they are** — on your own disks, NAS shares, and memory-card
+  dumps. Nothing is uploaded anywhere: no account, no telemetry, no network traffic beyond
+  localhost on your own machine.
+- **Nothing to hand over, nothing to get back out.** The index is a plain SQLite file in your user
+  directory, the originals are never touched, and deleting the app costs you nothing.
+- **Built for the messy reality** of decades of scattered folders — including the HEIC and RAW
+  files that cloud services often treat as second-class or transcode behind your back.
+
 ## Highlights
 
 - **Read-only indexing** — originals are never moved, renamed, or written to.
