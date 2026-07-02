@@ -158,8 +158,16 @@ fun Application.photonicModule(
 
         get("/timeline") {
             val from = call.longParamOrNull("from")
-            val to = call.longParamOrNull("to")
             val bucket = call.request.queryParameters["bucket"] ?: "month"
+            // `within` mirrors /photos: given a parent-bucket start in `from`, derive the
+            // exclusive end with the same server-side bucketing, so "months of this year" /
+            // "days of this month" align exactly with the parent bar the user clicked.
+            val within = call.request.queryParameters["within"]
+            val to = if (within != null && from != null) bucketEnd(from, within, zone)
+            else call.longParamOrNull("to")
+            // fill=1 also emits zero-count buckets between the first and last, giving the
+            // client a temporally linear axis (a 5-year gap looks like a gap, not one bar-width).
+            val fill = call.request.queryParameters["fill"] == "1"
             val dates = transaction {
                 Photos.select(Photos.createdDate).where {
                     var c: Op<Boolean> = Op.TRUE
@@ -168,9 +176,10 @@ fun Application.photonicModule(
                     c
                 }.map { it[Photos.createdDate] }
             }
-            val buckets = dates.groupingBy { bucketStart(it, bucket, zone) }.eachCount()
-                .map { (k, v) -> TimelineBucket(k, v.toLong()) }
-                .sortedBy { it.bucketStart }
+            val counts = dates.groupingBy { bucketStart(it, bucket, zone) }.eachCount()
+                .mapValues { it.value.toLong() }
+            val buckets = if (fill) fillBuckets(counts, bucket, zone, from, to)
+            else counts.map { (k, v) -> TimelineBucket(k, v) }.sortedBy { it.bucketStart }
             call.respond(buckets)
         }
 
@@ -260,6 +269,32 @@ internal fun bucketStart(epochMs: Long, bucket: String, zone: ZoneId): Long {
     }
     return start.atStartOfDay(zone).toInstant().toEpochMilli()
 }
+
+/**
+ * Expands sparse per-bucket [counts] into a contiguous, sorted bucket sequence, emitting
+ * zero-count buckets for the gaps. The range is [fromMs, toMs) when given (aligned down to a
+ * bucket start), else the span of the observed data. Capped as a safety net against absurd
+ * ranges — the UI only ever asks for all-years / months-of-a-year / days-of-a-month.
+ */
+internal fun fillBuckets(
+    counts: Map<Long, Long>,
+    bucket: String,
+    zone: ZoneId,
+    fromMs: Long? = null,
+    toMs: Long? = null,
+): List<TimelineBucket> {
+    if (counts.isEmpty() && (fromMs == null || toMs == null)) return emptyList()
+    var cur = bucketStart(fromMs ?: counts.keys.min(), bucket, zone)
+    val endExclusive = toMs ?: (counts.keys.max() + 1)
+    val result = ArrayList<TimelineBucket>()
+    while (cur < endExclusive && result.size < FILL_CAP) {
+        result.add(TimelineBucket(cur, counts[cur] ?: 0))
+        cur = bucketEnd(cur, bucket, zone)
+    }
+    return result
+}
+
+private const val FILL_CAP = 1000
 
 /** Exclusive end of the bucket containing [epochMs] — i.e. the start of the next bucket. */
 internal fun bucketEnd(epochMs: Long, bucket: String, zone: ZoneId): Long {
