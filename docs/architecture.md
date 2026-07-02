@@ -94,14 +94,19 @@ WAL + `foreign_keys` are set via the JDBC URL (they can't be changed inside a tr
 Tauri's `externalBin` wants a **single executable** named with the target triple
 (`photonic-backend-aarch64-apple-darwin`). A JVM app isn't naturally one file:
 
-- **Path A (recommended first):** `jlink` a trimmed JRE + the shaded fat-jar
+- **Path A (in use):** `jlink` a trimmed JRE + the shaded fat-jar
   (`mvn -DskipTests package` → `backend/target/photonic-backend-0.1.0.jar`), bundle the runtime as a
-  Tauri **resource**, and make a tiny `java -jar` launcher the sidecar binary.
+  Tauri **resource**, and make a tiny `java -jar` launcher the sidecar binary
+  (`binaries/photonic-backend-<triple>`). This is what the current `.dmg` ships.
 - **Path B (optimization):** GraalVM `native-image` → a true single binary that drops straight into
   `externalBin`.
 
-ExifTool ships as a Tauri **resource** (`frontend/src-tauri/resources/exiftool/`); the shell sets
-`PHOTONIC_EXIFTOOL` to its resolved path at launch. `npm run tauri build` produces the `.dmg` (macOS).
+The Rust shell (`src-tauri/src/lib.rs`) resolves the bundled JRE, fat-jar, and exiftool from the
+app's Resources dir and passes them to the launcher/sidecar as `PHOTONIC_JAVA` / `PHOTONIC_JAR` /
+`PHOTONIC_EXIFTOOL` (each best-effort; the launcher and backend fall back to `java`/`exiftool` on
+`PATH`). ExifTool ships as a Tauri **resource** (`frontend/src-tauri/resources/exiftool/`) — the
+self-contained distribution (script + `lib/`) that runs on the system `/usr/bin/perl`.
+`npm run tauri build` produces the `.dmg` (macOS); see the README for the one-time staging steps.
 
 ## Status / verified
 
@@ -110,8 +115,10 @@ ExifTool ships as a Tauri **resource** (`frontend/src-tauri/resources/exiftool/`
 - ✅ Live API verified end-to-end (scan → poll → timeline bucketing → photos → thumbnail bytes →
   collect; originals left intact; 404 paths).
 - ✅ Frontend type-checks (strict) and the web bundle builds (`npm run build`).
-- ⏳ Not built here (needs macOS/WebKit + Rust): the Tauri shell compile and the `.dmg`. The Rust in
-  `src-tauri/` is written but unbuilt — expect minor API tweaks against the generated capability schema.
+- ✅ Tauri shell compiles and the **`.dmg` builds on Apple Silicon** (`aarch64-apple-darwin`, Path A
+  jlink launcher). Verified end-to-end: the bundled jlink runtime boots the backend, the
+  `PHOTONIC_PORT`/`PHOTONIC_TOKEN` handshake completes, `/health` returns 200, and the bundled
+  ExifTool is detected. The `.dmg` is currently **unsigned** (no code signing / notarization yet).
 
 ## Backlog / next steps
 

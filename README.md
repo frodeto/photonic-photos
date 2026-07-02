@@ -68,4 +68,46 @@ cd backend && mvn test     # scanner integration test over generated fixture JPE
 The backend is bundled as a Tauri **sidecar**; ExifTool ships as a Tauri **resource**. See
 [`docs/architecture.md`](docs/architecture.md#packaging) and
 `frontend/src-tauri/binaries/README.md` for the two packaging paths (jlink launcher vs GraalVM
-native-image). `npm run tauri build` produces the `.dmg` (run on a Mac).
+native-image). The current build uses **Path A (jlink launcher)** and produces an **unsigned**
+`.dmg` — verified building and launching on Apple Silicon.
+
+**One-time prerequisites** (Apple Silicon): a Rust toolchain (`rustup`), JDK 21 (`jlink`), Node, and
+Maven. Then stage the sidecar payload once:
+
+```bash
+# 1. Build the backend fat jar
+cd backend && mvn -DskipTests package
+
+# 2. Trim a JRE and stage it + the jar as Tauri resources
+cd ../frontend/src-tauri
+jlink --add-modules java.base,java.desktop,java.instrument,java.management,java.naming,java.sql,\
+jdk.unsupported,java.logging,java.xml,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.zipfs,\
+java.security.sasl,java.security.jgss,jdk.localedata \
+  --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output resources/runtime
+# jlink writes the legal/ notices read-only (mode 444). tauri-build copies resources into
+# target/ preserving that mode, then fails ("Permission denied (os error 13)") when a *later*
+# rebuild tries to overwrite them. Make the staged runtime user-writable so rebuilds succeed:
+chmod -R u+w resources/runtime
+cp ../../backend/target/photonic-backend-0.1.0.jar resources/photonic-backend-0.1.0.jar
+
+# 3. Bundle a self-contained ExifTool (the exiftool script + lib/) into resources/exiftool/
+#    (from the Image-ExifTool distribution at https://exiftool.org)
+
+# 4. The sidecar launcher lives at binaries/photonic-backend-<target-triple> (a small
+#    `java -jar` shell script; the Rust shell passes it PHOTONIC_JAVA/PHOTONIC_JAR/PHOTONIC_EXIFTOOL).
+```
+
+The jlink runtime, staged jar, launcher, and ExifTool payload are gitignored — build them locally.
+Then build the bundle:
+
+```bash
+cd frontend && npm run tauri build
+# → src-tauri/target/release/bundle/dmg/Photonic Photos_0.1.0_aarch64.dmg
+```
+
+If a rebuild still fails with `Permission denied (os error 13)`, you have read-only runtime copies
+left in `target/` from a previous build — clear them and rebuild:
+`rm -rf src-tauri/target/release/resources src-tauri/target/release/bundle`.
+
+Because the `.dmg` is unsigned, first launch needs right-click → **Open** (or
+`xattr -dr com.apple.quarantine "…/Photonic Photos.app"`).

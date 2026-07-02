@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 
+use tauri::path::BaseDirectory;
 use tauri::{async_runtime, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -35,10 +36,31 @@ pub fn run() {
             let handle = app.handle().clone();
 
             // Spawn the bundled Kotlin backend as a sidecar.
-            let sidecar = app
+            let mut sidecar = app
                 .shell()
                 .sidecar("photonic-backend")
                 .expect("failed to create `photonic-backend` sidecar command");
+
+            // Resolve the bundled JRE, fat jar, and exiftool from the app's Resources
+            // dir and hand them to the launcher script via the environment. Each is
+            // best-effort: the launcher falls back to `java`/relative paths and the
+            // backend falls back to `exiftool` on PATH if a var is absent.
+            let resolver = app.path();
+            if let Ok(java) = resolver.resolve("resources/runtime/bin/java", BaseDirectory::Resource)
+            {
+                sidecar = sidecar.env("PHOTONIC_JAVA", java.to_string_lossy().to_string());
+            }
+            if let Ok(jar) =
+                resolver.resolve("resources/photonic-backend-0.1.0.jar", BaseDirectory::Resource)
+            {
+                sidecar = sidecar.env("PHOTONIC_JAR", jar.to_string_lossy().to_string());
+            }
+            if let Ok(exiftool) =
+                resolver.resolve("resources/exiftool/exiftool", BaseDirectory::Resource)
+            {
+                sidecar = sidecar.env("PHOTONIC_EXIFTOOL", exiftool.to_string_lossy().to_string());
+            }
+
             let (mut rx, child) = sidecar.spawn().expect("failed to spawn backend sidecar");
 
             // Keep the child handle alive for the app's lifetime so the process isn't reaped early.

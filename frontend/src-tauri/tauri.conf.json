@@ -28,6 +28,10 @@
     "targets": ["dmg", "app"],
     "icon": ["icons/icon.icns", "icons/icon.png"],
     "externalBin": ["binaries/photonic-backend"],
-    "resources": ["resources/exiftool/"]
+    "resources": [
+      "resources/exiftool/",
+      "resources/runtime/",
+      "resources/photonic-backend-0.1.0.jar"
+    ]
   }
 }
