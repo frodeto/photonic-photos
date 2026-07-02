@@ -2,6 +2,7 @@ package photos
 
 import photos.api.bucketEnd
 import photos.api.bucketStart
+import photos.api.fillBuckets
 import java.time.Instant
 import java.time.ZoneId
 import kotlin.test.Test
@@ -42,5 +43,35 @@ class BucketBoundaryTest {
                 "$g: last ms before end shares the bucket with t",
             )
         }
+    }
+
+    @Test
+    fun `fillBuckets emits zero buckets for gaps so the axis is temporally linear`() {
+        val y2019 = bucketStart(ms("2019-06-01T12:00:00Z"), "year", zone)
+        val y2023 = bucketStart(ms("2023-06-01T12:00:00Z"), "year", zone)
+        val filled = fillBuckets(mapOf(y2019 to 3L, y2023 to 7L), "year", zone)
+        assertEquals(5, filled.size, "2019..2023 inclusive")
+        assertEquals(listOf(3L, 0L, 0L, 0L, 7L), filled.map { it.count })
+        // Each bucket start must be the exact start of the next year (DST/leap safe).
+        filled.zipWithNext().forEach { (a, b) ->
+            assertEquals(bucketEnd(a.bucketStart, "year", zone), b.bucketStart)
+        }
+    }
+
+    @Test
+    fun `fillBuckets with a parent range covers the whole parent, not just the observed span`() {
+        val yearStart = bucketStart(ms("2023-06-15T10:30:00Z"), "year", zone)
+        val yearEnd = bucketEnd(yearStart, "year", zone)
+        val march = bucketStart(ms("2023-03-10T00:00:00Z"), "month", zone)
+        val filled = fillBuckets(mapOf(march to 4L), "month", zone, fromMs = yearStart, toMs = yearEnd)
+        assertEquals(12, filled.size, "months of a year view always shows all 12 months")
+        assertEquals(yearStart, filled.first().bucketStart)
+        assertEquals(4L, filled.single { it.bucketStart == march }.count)
+        assertEquals(11, filled.count { it.count == 0L })
+    }
+
+    @Test
+    fun `fillBuckets is empty for no data and unbounded range`() {
+        assertEquals(0, fillBuckets(emptyMap(), "month", zone).size)
     }
 }
