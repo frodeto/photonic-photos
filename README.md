@@ -1,9 +1,27 @@
 # Photonic Photos
 
 Get an overview of a large, scattered photo library **without moving or collecting the originals**.
-Point it at a folder, it recursively indexes photo metadata into a local datastore, and a desktop
-GUI shows a **zoomable timeline** of when photos were taken — with thumbnail-on-hover and a
-"copy selected to a *look closer at* folder" action for editing elsewhere.
+Point it at your folders, it recursively indexes photo metadata into a local datastore, and a
+desktop GUI shows a **zoomable timeline** of when photos were taken — drill from years into months
+into days, preview photos in a lightbox, and copy a selection out to a *look closer at* folder for
+editing elsewhere.
+
+![Photonic Photos: drilled into 2017, with a selection ready to copy out](docs/screenshot.png)
+
+> **Status:** early-stage personal project. macOS (Apple Silicon) only, local unsigned builds —
+> no prebuilt binaries yet. Everything runs locally; your photos never leave your machine and the
+> originals are never modified.
+
+## Highlights
+
+- **Read-only indexing** — originals are never moved, renamed, or written to.
+- **Zoomable timeline** on a linear time axis: all years → months of a year → days of a month,
+  with breadcrumb navigation. Gaps in your library look like gaps.
+- **Hover metadata**, **lightbox** with keyboard-only triage (arrows, Space to mark, Esc), and
+  thumbnail selection for the copy-out flow.
+- **Incremental rescans** — only new/changed files are re-indexed; deleted files drop out.
+- Supported formats: `.jpg .jpeg .heic .heif .cr2 .cr3 .dng .nef .arw .orf .raf .rw2`
+  (JPEG renders natively; HEIC/RAW metadata and thumbnails come from ExifTool embedded previews).
 
 Built as two independent parts integrated over a localhost HTTP/JSON contract:
 
@@ -12,9 +30,8 @@ Built as two independent parts integrated over a localhost HTTP/JSON contract:
 | **backend/** | Kotlin + Ktor + Exposed/SQLite, ExifTool | recursive indexer + REST API |
 | **frontend/** | Tauri v2 + Vite + React + TypeScript | desktop GUI, runs the backend as a sidecar |
 
-Supported formats: `.jpg .jpeg .heic .heif .cr2 .cr3 .dng .nef .arw .orf .raf .rw2`. JPEG renders
-natively; HEIC and RAW metadata + thumbnails come from ExifTool embedded previews (see below). See
-[`docs/architecture.md`](docs/architecture.md) for the full design, data model, and packaging notes.
+See [`docs/architecture.md`](docs/architecture.md) for the full design, data model, and packaging
+notes.
 
 ## Quick start (development)
 
@@ -23,7 +40,7 @@ The two halves run independently. **Backend first:**
 ```bash
 cd backend
 mvn exec:java            # prints "PHOTONIC_PORT=<n>" and "PHOTONIC_TOKEN=<secret>", then serves on 127.0.0.1
-# for a stable dev port + token (so the browser client can reach it): 
+# for a stable dev port + token (so the browser client can reach it):
 PHOTONIC_PORT=8899 PHOTONIC_TOKEN=photonic-dev mvn exec:java
 ```
 
@@ -51,18 +68,24 @@ VITE_BACKEND_PORT=8899 npm run dev      # open http://localhost:5173 in a browse
 npm run tauri dev
 ```
 
+Tip: after pulling new commits, restart the backend too (`mvn compile exec:java`) — the UI checks
+the backend's API generation on startup and warns if it's stale.
+
 ## ExifTool
 
 EXIF/RAW metadata and embedded RAW previews come from [ExifTool](https://exiftool.org). The backend
 resolves it from `PHOTONIC_EXIFTOOL` (else `exiftool` on `PATH`). **If ExifTool is absent the backend
-still runs** — it falls back to filesystem metadata and ImageIO thumbnails for JPEGs (RAW
+still runs** — it falls back to filesystem metadata and ImageIO thumbnails for JPEGs (HEIC/RAW
 thumbnails/metadata need ExifTool).
 
 ## Tests
 
 ```bash
-cd backend && mvn test     # scanner integration test over generated fixture JPEGs
+cd backend && mvn test                        # scanner/bucketing/EXIF unit + integration tests
+cd frontend && npx tsc --noEmit && npm run build
 ```
+
+CI runs the same checks on every push and pull request.
 
 ## Packaging (macOS `.dmg`)
 
@@ -112,3 +135,20 @@ left in `target/` from a previous build — clear them and rebuild:
 
 Because the `.dmg` is unsigned, first launch needs right-click → **Open** (or
 `xattr -dr com.apple.quarantine "…/Photonic Photos.app"`).
+
+## Contributing
+
+Issues and pull requests are welcome. Before submitting a PR, please run the checks above
+(`mvn test` for the backend, `tsc --noEmit` + `npm run build` for the frontend) — CI runs the
+same. For anything substantial, opening an issue first to discuss the approach is appreciated.
+
+## License & acknowledgements
+
+[MIT](LICENSE) © Frode Torvund.
+
+The packaged app bundles third-party software, each under its own license:
+
+- **[ExifTool](https://exiftool.org)** by Phil Harvey (Perl Artistic License / GPL) — all
+  EXIF/RAW/HEIC metadata reading and embedded-preview extraction.
+- An **OpenJDK** runtime produced with `jlink` (GPLv2 with Classpath Exception); the runtime's
+  `legal/` notices ship inside the bundle.
