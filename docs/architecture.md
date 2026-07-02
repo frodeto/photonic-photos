@@ -46,7 +46,7 @@ UI falls back to `VITE_BACKEND_PORT` (default 8899).
 | `POST` | `/roots/scan` | `{path}` → start/refresh an incremental scan, returns `{jobId}` (the running job's id if that root is already being scanned) |
 | `DELETE` | `/roots/{id}` | forget a root: removes its rows + cached renders (originals untouched); `409` while a scan runs |
 | `GET` | `/scans/{id}` | scan progress (seen / indexed / errors / state) |
-| `GET` | `/timeline?from&to&bucket=day\|month\|year` | histogram buckets `{bucketStart, count}` |
+| `GET` | `/timeline?from&to&bucket=day\|month\|year&within&fill` | histogram buckets `{bucketStart, count}`; `within` derives the exclusive end from `from` server-side (like `/photos`), `fill=1` emits zero-count buckets so the axis is linear in time |
 | `GET` | `/photos?from&to&limit&offset` | photo rows in a date range, ordered by date |
 | `GET` | `/photos/{id}` | full metadata |
 | `GET` | `/photos/{id}/thumbnail` | cached ~256px JPEG (generated during scan) |
@@ -96,7 +96,10 @@ WAL + `foreign_keys` are set via the JDBC URL (they can't be changed inside a tr
 
 ## Frontend (`frontend/src/`)
 
-- `components/Timeline.tsx` — SVG bar histogram; click a bar to drill into that bucket.
+- `components/Timeline.tsx` — SVG bar histogram over gap-filled buckets, so the x axis is linear
+  in time (a 5-year gap looks like a gap). Clicking a bar shows its photos and — above day level —
+  zooms the histogram into it: all years → months of a year → days of a month, with a breadcrumb
+  to climb back up (replaces the old global granularity dropdown).
 - `components/PhotoStrip.tsx` — thumbnails for the bucket load eagerly; **hover** reveals a metadata
   overlay, the **corner checkbox** marks a photo for the copy set, and **clicking** opens the lightbox.
 - `components/Lightbox.tsx` — full-window ~1024px preview with metadata, arrow/Esc keyboard nav,
@@ -104,7 +107,7 @@ WAL + `foreign_keys` are set via the JDBC URL (they can't be changed inside a tr
   neighbouring previews so stepping through is instant.
 - `App.tsx` — folder picker (native dialog under Tauri), scan + progress polling (the timeline
   refreshes live while a scan runs), a roots panel listing indexed folders with per-root
-  rescan/forget actions, granularity switch, selection, copy-out, and lightbox state.
+  rescan/forget actions, breadcrumb drill-down navigation, selection, copy-out, and lightbox state.
 
 ## Packaging
 
