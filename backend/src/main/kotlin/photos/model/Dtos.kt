@@ -2,6 +2,11 @@ package photos.model
 
 import kotlinx.serialization.Serializable
 
+// No property defaults: the Json config doesn't encode defaults, and both fields must always
+// be on the wire ("status" for probes/scripts, "api" for the UI's stale-backend check).
+@Serializable
+data class HealthResponse(val status: String, val api: Int)
+
 @Serializable
 data class ScanRequest(val path: String)
 

@@ -49,7 +49,7 @@ A hard kill is fine: SQLite runs in WAL (crash-safe) and scans are incrementally
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/health` | readiness |
+| `GET` | `/health` | readiness; also returns `api` (generation number) — the UI warns when the backend is older than it expects, since a stale backend silently ignores newer query params |
 | `GET` | `/roots` | indexed roots + photo counts |
 | `POST` | `/roots/scan` | `{path}` → start/refresh an incremental scan, returns `{jobId}` (the running job's id if that root is already being scanned) |
 | `DELETE` | `/roots/{id}` | forget a root: removes its rows + cached renders (originals untouched); `409` while a scan runs |
