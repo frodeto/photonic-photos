@@ -6,9 +6,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.deleteWhere
-import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.insertAndGetId
 import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.statements.UpdateBuilder
 import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
@@ -16,18 +16,25 @@ import photos.db.Photos
 import photos.db.ScanJobs
 import photos.db.ScanRoots
 import photos.thumbnail.ThumbnailService
+import java.io.IOException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
-import java.util.stream.Collectors
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.extension
 
 /**
  * Recursively scans a root folder for photos and indexes their metadata.
  *
  * Incremental: a file already in the DB with matching (size, mtime) is skipped, so re-scans
- * are cheap. New or changed files are (re)indexed. Reading is strictly read-only — originals
- * are never modified or moved.
+ * are cheap. New or changed files are (re)indexed, keeping their photo id stable; rows whose
+ * files have disappeared from disk are removed (with their cached thumbnails/previews).
+ * Reading is strictly read-only — originals are never modified or moved.
+ *
+ * Only one scan runs per root at a time: a scan request for a root that is already being
+ * scanned returns the running job's id instead of racing a second scan over the same rows.
  */
 class Scanner(
     private val exif: ExifToolService,
@@ -38,9 +45,17 @@ class Scanner(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val extensions = setOf("jpg", "jpeg", "cr2", "dng")
     private val batchSize = 100
+    private val seenUpdateEvery = 500
+
+    /** rootId → jobId of the scan currently running for that root. */
+    private val runningRoots = ConcurrentHashMap<Int, Int>()
+
+    /** What we already know about an indexed file, enough to decide if it needs re-indexing. */
+    private data class KnownRow(val id: Int, val size: Long, val mtime: Long)
 
     /**
-     * Registers/refreshes the root and returns the scan job id immediately.
+     * Registers/refreshes the root and returns the scan job id immediately. If a scan is
+     * already running for this root, returns that job's id instead of starting another.
      * When [blocking] is true (tests) the scan runs inline before returning.
      */
     fun startScan(rootPath: String, blocking: Boolean = false): Int {
@@ -55,13 +70,19 @@ class Scanner(
                 it[addedAt] = now
             }.value
         }
-        val jobId = transaction {
-            ScanJobs.insertAndGetId {
-                it[ScanJobs.rootId] = rootId
-                it[state] = "running"
-                it[startedAt] = now
-            }.value
+
+        var claimed = false
+        val jobId = runningRoots.computeIfAbsent(rootId) {
+            claimed = true
+            transaction {
+                ScanJobs.insertAndGetId {
+                    it[ScanJobs.rootId] = rootId
+                    it[state] = "running"
+                    it[startedAt] = now
+                }.value
+            }
         }
+        if (!claimed) return jobId
 
         if (blocking) {
             runScan(rootId, root, jobId)
@@ -73,22 +94,36 @@ class Scanner(
 
     private fun runScan(rootId: Int, root: Path, jobId: Int) {
         try {
-            val files = Files.walk(root).use { stream ->
-                stream.filter { Files.isRegularFile(it) }
-                    .filter { it.extension.lowercase() in extensions }
-                    .collect(Collectors.toList())
-            }
+            val (files, walkErrors) = walk(root, jobId)
             setSeen(jobId, files.size)
 
-            val toIndex = files.filter { needsIndex(it) }
+            // Everything already indexed under this root in one query — drives both the
+            // changed-file check (instead of a per-file lookup) and missing-file cleanup.
+            val known: Map<String, KnownRow> = transaction {
+                Photos.select(Photos.id, Photos.filePath, Photos.fileSize, Photos.fileMtime)
+                    .where { Photos.rootId eq rootId }
+                    .associate {
+                        it[Photos.filePath] to
+                            KnownRow(it[Photos.id].value, it[Photos.fileSize], it[Photos.fileMtime])
+                    }
+            }
+
+            val toIndex = files.mapNotNull { file ->
+                val attrs = readAttrs(file) ?: return@mapNotNull null
+                val existing = known[file.toString()]
+                val changed = existing == null ||
+                    existing.size != attrs.size() ||
+                    existing.mtime != attrs.lastModifiedTime().toMillis()
+                if (changed) file to existing?.id else null
+            }
 
             var indexed = 0
-            var errors = 0
+            var errors = walkErrors
             for (chunk in toIndex.chunked(batchSize)) {
-                val exifMap = exif.readBatch(chunk)
-                for (file in chunk) {
+                val exifMap = exif.readBatch(chunk.map { it.first })
+                for ((file, existingId) in chunk) {
                     try {
-                        indexOne(rootId, file, exifMap[file])
+                        indexOne(rootId, file, exifMap[file], existingId)
                         indexed++
                     } catch (e: Exception) {
                         log.warn("failed to index $file: ${e.message}")
@@ -97,6 +132,8 @@ class Scanner(
                 }
                 setProgress(jobId, indexed, errors)
             }
+
+            val removed = removeMissing(known, files)
 
             transaction {
                 ScanRoots.update({ ScanRoots.id eq rootId }) { it[lastScanAt] = clock() }
@@ -107,7 +144,7 @@ class Scanner(
                     it[ScanJobs.errors] = errors
                 }
             }
-            log.info("scan #$jobId done: ${files.size} seen, $indexed indexed, $errors errors")
+            log.info("scan #$jobId done: ${files.size} seen, $indexed indexed, $removed removed, $errors errors")
         } catch (e: Exception) {
             log.error("scan #$jobId failed", e)
             transaction {
@@ -117,20 +154,39 @@ class Scanner(
                     it[errorSummary] = e.message ?: e.javaClass.simpleName
                 }
             }
+        } finally {
+            runningRoots.remove(rootId)
         }
     }
 
-    private fun needsIndex(file: Path): Boolean {
-        val attrs = readAttrs(file) ?: return false
-        return transaction {
-            val existing = Photos.selectAll().where { Photos.filePath eq file.toString() }.firstOrNull()
-            existing == null ||
-                existing[Photos.fileSize] != attrs.size() ||
-                existing[Photos.fileMtime] != attrs.lastModifiedTime().toMillis()
-        }
+    /**
+     * Collects matching files under [root]. Unreadable files/directories are skipped and
+     * counted instead of aborting: Files.walk would throw mid-stream on the first
+     * permission-denied subfolder and fail the whole scan.
+     */
+    private fun walk(root: Path, jobId: Int): Pair<List<Path>, Int> {
+        val files = ArrayList<Path>()
+        var errors = 0
+        Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                if (attrs.isRegularFile && file.extension.lowercase() in extensions) {
+                    files.add(file)
+                    // Publish progress during discovery so a long walk doesn't sit at "0 seen".
+                    if (files.size % seenUpdateEvery == 0) setSeen(jobId, files.size)
+                }
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult {
+                log.warn("cannot access $file: ${exc.message}")
+                errors++
+                return FileVisitResult.CONTINUE
+            }
+        })
+        return files to errors
     }
 
-    private fun indexOne(rootId: Int, file: Path, data: ExifData?) {
+    private fun indexOne(rootId: Int, file: Path, data: ExifData?, existingId: Int?) {
         val attrs = readAttrs(file) ?: return
         val mtime = attrs.lastModifiedTime().toMillis()
         val created = data?.createdDateMs ?: mtime
@@ -140,32 +196,44 @@ class Scanner(
             else -> "no_exif"
         }
 
-        val photoId = transaction {
-            // upsert by path: replace any stale row, then insert fresh
-            Photos.deleteWhere { Photos.filePath eq file.toString() }
-            Photos.insertAndGetId {
-                it[Photos.rootId] = rootId
-                it[filePath] = file.toString()
-                it[fileName] = file.fileName.toString()
-                it[fileSize] = attrs.size()
-                it[fileMtime] = mtime
-                it[createdDate] = created
-                it[cameraMake] = data?.cameraMake
-                it[cameraModel] = data?.cameraModel
-                it[lens] = data?.lens
-                it[shutterSpeed] = data?.shutterSpeed
-                it[aperture] = data?.aperture
-                it[focalLength] = data?.focalLength
-                it[focalLength35] = data?.focalLength35
-                it[gpsLat] = data?.gpsLat
-                it[gpsLon] = data?.gpsLon
-                it[width] = data?.width
-                it[height] = data?.height
-                it[orientation] = data?.orientation
-                it[indexedAt] = clock()
-                it[exifStatus] = status
-            }.value
+        fun fill(s: UpdateBuilder<*>) {
+            s[Photos.rootId] = rootId
+            s[Photos.filePath] = file.toString()
+            s[Photos.fileName] = file.fileName.toString()
+            s[Photos.fileSize] = attrs.size()
+            s[Photos.fileMtime] = mtime
+            s[Photos.createdDate] = created
+            s[Photos.cameraMake] = data?.cameraMake
+            s[Photos.cameraModel] = data?.cameraModel
+            s[Photos.lens] = data?.lens
+            s[Photos.shutterSpeed] = data?.shutterSpeed
+            s[Photos.aperture] = data?.aperture
+            s[Photos.focalLength] = data?.focalLength
+            s[Photos.focalLength35] = data?.focalLength35
+            s[Photos.gpsLat] = data?.gpsLat
+            s[Photos.gpsLon] = data?.gpsLon
+            s[Photos.width] = data?.width
+            s[Photos.height] = data?.height
+            s[Photos.orientation] = data?.orientation
+            s[Photos.indexedAt] = clock()
+            s[Photos.exifStatus] = status
         }
+
+        val photoId = transaction {
+            if (existingId != null) {
+                // Update in place: the photo id — which UI selections, collect requests and
+                // the thumbnail/preview cache all key on — survives re-indexing a changed file.
+                Photos.update({ Photos.id eq existingId }) {
+                    fill(it)
+                    it[thumbPath] = null
+                }
+                existingId
+            } else {
+                Photos.insertAndGetId { fill(it) }.value
+            }
+        }
+        // The file's content changed, so any cached renders for this id are stale.
+        if (existingId != null) thumbs.invalidate(photoId)
 
         val thumb = thumbs.generate(file, photoId, data?.orientation)
         if (thumb != null) {
@@ -173,6 +241,23 @@ class Scanner(
                 Photos.update({ Photos.id eq photoId }) { it[thumbPath] = thumb.toString() }
             }
         }
+    }
+
+    /**
+     * Drops rows (and cached renders) for files under this root that no longer exist on disk.
+     * Conservative: Files.notExists is true only when absence is *confirmed*, so a file that
+     * merely couldn't be read this pass (e.g. permissions) is kept.
+     */
+    private fun removeMissing(known: Map<String, KnownRow>, seen: List<Path>): Int {
+        val seenPaths = seen.mapTo(HashSet()) { it.toString() }
+        var removed = 0
+        for ((path, row) in known) {
+            if (path in seenPaths || !Files.notExists(Path.of(path))) continue
+            transaction { Photos.deleteWhere { Photos.id eq row.id } }
+            thumbs.invalidate(row.id)
+            removed++
+        }
+        return removed
     }
 
     private fun readAttrs(file: Path): BasicFileAttributes? = try {
