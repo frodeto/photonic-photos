@@ -60,6 +60,21 @@ button:disabled {
   padding: 10px;
 }
 
+/* Startup warning, e.g. a dev backend that predates this UI. */
+.banner {
+  background: #4a3418;
+  border: 1px solid #8a5c1e;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+}
+
+.banner code {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
 /* Indexed roots: one compact row per folder with rescan/forget actions. */
 .roots {
   display: flex;
