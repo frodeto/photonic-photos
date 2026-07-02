@@ -12,8 +12,9 @@ Built as two independent parts integrated over a localhost HTTP/JSON contract:
 | **backend/** | Kotlin + Ktor + Exposed/SQLite, ExifTool | recursive indexer + REST API |
 | **frontend/** | Tauri v2 + Vite + React + TypeScript | desktop GUI, runs the backend as a sidecar |
 
-Supported formats: `.jpg .jpeg .cr2 .dng`. See [`docs/architecture.md`](docs/architecture.md) for the
-full design, data model, and packaging notes.
+Supported formats: `.jpg .jpeg .heic .heif .cr2 .cr3 .dng .nef .arw .orf .raf .rw2`. JPEG renders
+natively; HEIC and RAW metadata + thumbnails come from ExifTool embedded previews (see below). See
+[`docs/architecture.md`](docs/architecture.md) for the full design, data model, and packaging notes.
 
 ## Quick start (development)
 

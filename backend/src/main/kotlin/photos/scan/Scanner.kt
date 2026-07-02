@@ -47,7 +47,14 @@ class Scanner(
 ) {
     private val log = LoggerFactory.getLogger(Scanner::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val extensions = setOf("jpg", "jpeg", "cr2", "dng")
+    // JPEG renders natively (ImageIO); everything else relies on exiftool for metadata and an
+    // embedded preview for thumbnails, so new formats are cheap to add here.
+    private val extensions = setOf(
+        "jpg", "jpeg",                 // JPEG
+        "heic", "heif",                // Apple/HEIF
+        "cr2", "cr3", "dng", "nef",    // Canon, Adobe, Nikon
+        "arw", "orf", "raf", "rw2",    // Sony, Olympus, Fujifilm, Panasonic
+    )
     private val batchSize = 100
     private val seenUpdateEvery = 500
 

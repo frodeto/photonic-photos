@@ -124,6 +124,24 @@ class ScannerTest {
     }
 
     @Test
+    fun `HEIC and RAW extensions are indexed (metadata-only without exiftool)`() {
+        writeJpeg("a.jpg", Color.RED)
+        // Contents don't matter for the extension filter; without exiftool these index from
+        // filesystem metadata and simply get no thumbnail.
+        for (name in listOf("phone.HEIC", "canon.cr3", "nikon.nef", "sony.arw")) {
+            Files.writeString(photosDir.resolve(name), "not really an image")
+        }
+        Files.writeString(photosDir.resolve("skip.txt"), "still ignored")
+
+        scanner.startScan(photosDir.toString(), blocking = true)
+
+        val rows = transaction { Photos.selectAll().map { it[Photos.fileName] to (it[Photos.thumbPath] != null) } }
+        assertEquals(5, rows.size, "jpg + 4 raw/heic files should be indexed, not the .txt")
+        assertTrue(rows.single { it.first == "a.jpg" }.second, "JPEG still gets an ImageIO thumbnail")
+        assertTrue(rows.filter { it.first != "a.jpg" }.none { it.second }, "no thumbnails without exiftool")
+    }
+
+    @Test
     fun `re-indexing a changed file keeps its photo id and drops stale cached renders`() {
         writeJpeg("a.jpg", Color.RED)
         scanner.startScan(photosDir.toString(), blocking = true)

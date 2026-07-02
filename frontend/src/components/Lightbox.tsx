@@ -29,16 +29,38 @@ export default function Lightbox({ photos, index, selectedIds, onToggleSelect, o
     };
   }, [photo]);
 
-  // Escape closes; arrows step through the strip (clamped at the ends).
+  // Warm the previews next to the current one: the backend renders+caches on first request and
+  // the response is immutably cacheable, so stepping to a neighbour is instant instead of
+  // waiting seconds for a RAW preview extraction.
+  useEffect(() => {
+    [index - 1, index + 1].forEach((i) => {
+      const neighbour = photos[i];
+      if (neighbour?.hasThumbnail) {
+        api.previewUrl(neighbour).then((u) => {
+          new Image().src = u;
+        });
+      }
+    });
+  }, [index, photos]);
+
+  // Escape closes; arrows step through the strip (clamped at the ends); Space toggles the
+  // copy-set flag, enabling keyboard-only triage. Ignore keys aimed at a focused control —
+  // e.g. Space on a still-focused nav button must not both navigate and toggle.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "BUTTON" || t.tagName === "INPUT")) return;
       if (e.key === "Escape") onClose();
       else if (e.key === "ArrowLeft" && index > 0) onNavigate(index - 1);
       else if (e.key === "ArrowRight" && index < photos.length - 1) onNavigate(index + 1);
+      else if (e.key === " ") {
+        e.preventDefault(); // don't scroll the page behind the lightbox
+        if (photo) onToggleSelect(photo.id);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [index, photos.length, onClose, onNavigate]);
+  }, [index, photos.length, photo, onClose, onNavigate, onToggleSelect]);
 
   if (!photo) return null;
   const selected = selectedIds.has(photo.id);
@@ -99,9 +121,9 @@ export default function Lightbox({ photos, index, selectedIds, onToggleSelect, o
               {index + 1} / {photos.length}
             </span>
           </div>
-          <label className="lb-select">
+          <label className="lb-select" title="Toggle with Space">
             <input type="checkbox" checked={selected} onChange={() => onToggleSelect(photo.id)} />
-            Add to “look closer at” copy set
+            Add to “look closer at” copy set <span className="lb-key">Space</span>
           </label>
         </figcaption>
       </figure>

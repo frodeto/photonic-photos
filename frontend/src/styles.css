@@ -311,6 +311,15 @@ button:disabled {
   accent-color: var(--accent-sel);
 }
 
+/* Small keyboard-hint chip next to the copy-set toggle. */
+.lb-key {
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid #3a3e46;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
 .lb-close {
   position: absolute;
   top: 14px;
