@@ -37,6 +37,14 @@ The Tauri shell (`frontend/src-tauri/src/lib.rs`) reads that line, stores the po
 fetches it via the `get_backend_port` command (`frontend/src/api/client.ts`). In browser-only dev the
 UI falls back to `VITE_BACKEND_PORT` (default 8899).
 
+**Shutdown** is belt-and-braces (Tauri does not kill sidecars on its own):
+1. On `RunEvent::Exit` the shell kills the sidecar child. The launcher script `exec`s java, so
+   that child PID *is* the JVM.
+2. The shell also sets `PHOTONIC_WATCH_STDIN=1`; the backend then exits when its stdin (the pipe
+   from the shell) reaches EOF — covering the case where the shell crashes and no kill is ever
+   sent. Dev runs (`mvn exec:java`, nohup) don't set the var and are unaffected.
+A hard kill is fine: SQLite runs in WAL (crash-safe) and scans are incrementally resumable.
+
 ## API (`backend/src/main/kotlin/photos/api/Routes.kt`)
 
 | Method | Path | Purpose |
