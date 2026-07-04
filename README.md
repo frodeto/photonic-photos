@@ -8,9 +8,10 @@ editing elsewhere.
 
 ![Photonic Photos: drilled into 2017, with a selection ready to copy out](docs/screenshot.png)
 
-> **Status:** early-stage personal project. macOS (Apple Silicon) only, local unsigned builds —
-> no prebuilt binaries yet. Everything runs locally; your photos never leave your machine and the
-> originals are never modified.
+> **Status:** early-stage personal project. A **Windows x64** installer is built by CI and attached
+> to [GitHub Releases](../../releases) (unsigned — see the SmartScreen note below); the **macOS**
+> (Apple Silicon) `.dmg` is built locally / by the same release workflow, also unsigned. Everything
+> runs locally; your photos never leave your machine and the originals are never modified.
 
 ## Why not just use iCloud or Google Photos?
 
@@ -101,7 +102,14 @@ cd frontend && npx tsc --noEmit && npm run build
 
 CI runs the same checks on every push and pull request.
 
-## Packaging (macOS `.dmg`)
+## Packaging
+
+Two installers ship: a **Windows x64 NSIS `…-setup.exe`** and a **macOS `.dmg`**. Both are built by
+the release workflow (`.github/workflows/release.yml`) on a `v*` tag — push a tag and it produces a
+**draft** GitHub Release with the installers attached, for a human to review and publish. The steps
+below document how to build each one locally.
+
+### macOS (`.dmg`)
 
 The backend is bundled as a Tauri **sidecar**; ExifTool ships as a Tauri **resource**. See
 [`docs/architecture.md`](docs/architecture.md#packaging) and
@@ -149,6 +157,55 @@ left in `target/` from a previous build — clear them and rebuild:
 
 Because the `.dmg` is unsigned, first launch needs right-click → **Open** (or
 `xattr -dr com.apple.quarantine "…/Photonic Photos.app"`).
+
+### Windows (`…-setup.exe`, x64)
+
+Same shape as macOS — jlink runtime + fat jar as Tauri **resources**, ExifTool as a resource — with
+two Windows-specific pieces:
+
+- **Sidecar launcher.** Windows has no `exec`, so the macOS launcher *script* can't carry over.
+  `frontend/src-tauri/launcher/` is a tiny Rust crate that spawns the bundled `java.exe`, forwards
+  stdio (so the `PHOTONIC_PORT`/`PHOTONIC_TOKEN` handshake and stdin-EOF watchdog work unchanged),
+  and ties the JVM to itself with a **Job Object** so quitting the app can't orphan `java.exe`. Its
+  compiled exe becomes the sidecar binary.
+- **Config.** `tauri.windows.conf.json` (merged over `tauri.conf.json` on Windows) selects the
+  **NSIS** target, a **per-user** install (no admin prompt), and downloads WebView2 silently if it's
+  absent.
+
+**One-time prerequisites** (Windows x64): [`rustup`](https://rustup.rs) with the **MSVC** toolchain +
+the **Visual Studio Build Tools** (C++ workload), **Temurin 21** (for `jlink`), **Node**, and
+**Maven**. Then stage the payload and build (PowerShell, from the repo root):
+
+```powershell
+# 1. Build the backend fat jar
+cd backend; mvn -DskipTests package; cd ..
+
+# 2. Trim a JRE and stage it + the jar as Tauri resources
+cd frontend/src-tauri
+& "$env:JAVA_HOME\bin\jlink.exe" `
+  --add-modules java.base,java.desktop,java.instrument,java.management,java.naming,java.sql,jdk.unsupported,java.logging,java.xml,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.zipfs,java.security.sasl,java.security.jgss,jdk.localedata `
+  --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output resources/runtime
+Copy-Item ../../backend/target/photonic-backend-0.1.0.jar resources/photonic-backend-0.1.0.jar
+
+# 3. Stage a self-contained ExifTool: from exiftool-<ver>_64.zip (https://exiftool.org), rename
+#    `exiftool(-k).exe` -> resources/exiftool/exiftool.exe and copy `exiftool_files/` beside it.
+
+# 4. Build the launcher crate and drop it in as the sidecar binary (target-triple name)
+cargo build --release --manifest-path launcher/Cargo.toml
+Copy-Item launcher/target/release/photonic-launcher.exe binaries/photonic-backend-x86_64-pc-windows-msvc.exe
+
+# 5. Build the installer
+cd ..; npm ci; npm run tauri build -- --bundles nsis
+# -> src-tauri/target/release/bundle/nsis/Photonic Photos_0.1.0_x64-setup.exe
+```
+
+The jlink runtime, staged jar, launcher, and ExifTool payload are gitignored — build them locally
+(CI does the same steps in `release.yml`). The installer is **per-user** (installs under your profile,
+**no admin prompt**) and bootstraps WebView2 only if it isn't already present.
+
+Because the `.exe` is unsigned, Windows **SmartScreen** may warn on first run — click **More info →
+Run anyway** (the same "trust a local unsigned build" step as the macOS right-click → Open). Code
+signing is deferred.
 
 ## Contributing
 

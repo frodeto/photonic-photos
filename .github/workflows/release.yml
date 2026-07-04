@@ -1,0 +1,223 @@
+name: Release
+
+# Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) to build the
+# installers and attach them to a **draft** GitHub Release. The release is left as a draft
+# so a human can review the artifacts and write the notes before publishing.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+# ExifTool is downloaded, not vendored: pin the version and hard-fail on a SHA256 mismatch so
+# a tampered or truncated download can never make it into a shipped installer. The same bytes
+# are served by exiftool.org (primary) and the SourceForge archive (fallback), so one hash
+# covers both. Bump these three together when moving to a newer ExifTool.
+env:
+  EXIFTOOL_VERSION: "13.59"
+  EXIFTOOL_WIN_SHA256: "44b512b25af500724ba579d0a53c8fc5851628b692dd5e5d94ae4a15c2cba9ec"
+  EXIFTOOL_MAC_SHA256: "668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a"
+
+jobs:
+  windows:
+    name: Windows installer (NSIS, x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build backend fat jar
+        working-directory: backend
+        run: mvn -B -DskipTests package
+
+      - name: Stage jlink runtime + jar
+        working-directory: frontend/src-tauri
+        shell: pwsh
+        run: |
+          & "$env:JAVA_HOME\bin\jlink.exe" `
+            --add-modules java.base,java.desktop,java.instrument,java.management,java.naming,java.sql,jdk.unsupported,java.logging,java.xml,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.zipfs,java.security.sasl,java.security.jgss,jdk.localedata `
+            --strip-debug --no-header-files --no-man-pages --compress=zip-6 `
+            --output resources/runtime
+          if ($LASTEXITCODE -ne 0) { throw "jlink failed" }
+          Copy-Item ../../backend/target/photonic-backend-0.1.0.jar resources/photonic-backend-0.1.0.jar -Force
+
+      - name: Download, verify + stage ExifTool
+        working-directory: frontend/src-tauri
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = $env:EXIFTOOL_VERSION
+          $zip = "exiftool-${ver}_64.zip"
+          $expected = $env:EXIFTOOL_WIN_SHA256.ToLower()
+          $urls = @(
+            "https://exiftool.org/$zip",
+            "https://sourceforge.net/projects/exiftool/files/$zip/download"
+          )
+          $got = $false
+          foreach ($u in $urls) {
+            try {
+              Write-Host "Downloading $u"
+              Invoke-WebRequest -Uri $u -OutFile $zip -MaximumRedirection 10
+              $got = $true; break
+            } catch { Write-Warning "download failed ($u): $_" }
+          }
+          if (-not $got) { throw "Could not download $zip from any mirror" }
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $expected) {
+            throw "SHA256 mismatch for ${zip}: expected $expected, got $actual"
+          }
+          Expand-Archive -Path $zip -DestinationPath exiftool-extract -Force
+          $root = "exiftool-extract/exiftool-${ver}_64"
+          New-Item -ItemType Directory -Force -Path resources/exiftool | Out-Null
+          # The distribution ships the exe as `exiftool(-k).exe` (the -k pauses on completion when
+          # double-clicked); rename to `exiftool.exe` so it runs non-interactively as a subprocess,
+          # and keep `exiftool_files/` beside it — that folder holds the bundled Perl, no system Perl needed.
+          Copy-Item "$root/exiftool(-k).exe" resources/exiftool/exiftool.exe -Force
+          Copy-Item "$root/exiftool_files" resources/exiftool/exiftool_files -Recurse -Force
+          Remove-Item $zip, exiftool-extract -Recurse -Force
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            frontend/src-tauri
+            frontend/src-tauri/launcher
+
+      - name: Build + stage sidecar launcher
+        working-directory: frontend/src-tauri
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build --release --manifest-path launcher/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "launcher build failed" }
+          New-Item -ItemType Directory -Force -Path binaries | Out-Null
+          # Tauri resolves the sidecar as binaries/<externalBin>-<target-triple>(.exe).
+          Copy-Item launcher/target/release/photonic-launcher.exe `
+            binaries/photonic-backend-x86_64-pc-windows-msvc.exe -Force
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build NSIS installer
+        working-directory: frontend
+        run: npm run tauri build -- --bundles nsis
+
+      - name: Attach installer to draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: frontend/src-tauri/target/release/bundle/nsis/*-setup.exe
+
+  macos:
+    name: macOS installer (dmg, Apple Silicon)
+    runs-on: macos-14
+    # Serialize after the Windows job so it creates the draft release first; this job then just
+    # attaches the dmg, avoiding a get-or-create race on the same tag. macOS is nice-to-have —
+    # the Windows installer is the primary deliverable of this workflow.
+    needs: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build backend fat jar
+        working-directory: backend
+        run: mvn -B -DskipTests package
+
+      - name: Stage jlink runtime + jar
+        working-directory: frontend/src-tauri
+        run: |
+          "$JAVA_HOME/bin/jlink" \
+            --add-modules java.base,java.desktop,java.instrument,java.management,java.naming,java.sql,jdk.unsupported,java.logging,java.xml,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.zipfs,java.security.sasl,java.security.jgss,jdk.localedata \
+            --strip-debug --no-header-files --no-man-pages --compress=zip-6 \
+            --output resources/runtime
+          # jlink writes legal/ notices read-only (444); tauri-build copies resources preserving
+          # that mode and then a later rebuild fails overwriting them. Make them user-writable.
+          chmod -R u+w resources/runtime
+          cp ../../backend/target/photonic-backend-0.1.0.jar resources/photonic-backend-0.1.0.jar
+
+      - name: Download, verify + stage ExifTool
+        working-directory: frontend/src-tauri
+        run: |
+          set -euo pipefail
+          ver="$EXIFTOOL_VERSION"
+          tarball="Image-ExifTool-${ver}.tar.gz"
+          got=""
+          for u in "https://exiftool.org/$tarball" \
+                   "https://sourceforge.net/projects/exiftool/files/$tarball/download"; do
+            echo "Downloading $u"
+            if curl -fsSL -o "$tarball" "$u"; then got=1; break; fi
+          done
+          [ -n "$got" ] || { echo "Could not download $tarball from any mirror" >&2; exit 1; }
+          echo "$EXIFTOOL_MAC_SHA256  $tarball" | shasum -a 256 -c -
+          tar xzf "$tarball"
+          # Self-contained Perl distribution: the `exiftool` script + its `lib/`, run by the
+          # system /usr/bin/perl. Mirrors the local staging documented in the README.
+          mkdir -p resources/exiftool
+          cp "Image-ExifTool-${ver}/exiftool" resources/exiftool/exiftool
+          cp -R "Image-ExifTool-${ver}/lib" resources/exiftool/lib
+          chmod +x resources/exiftool/exiftool
+          rm -rf "$tarball" "Image-ExifTool-${ver}"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      - name: Stage sidecar launcher script
+        working-directory: frontend/src-tauri
+        run: |
+          set -euo pipefail
+          triple="$(rustc -vV | awk '/host:/{print $2}')"
+          mkdir -p binaries
+          launcher="binaries/photonic-backend-${triple}"
+          # A tiny `java -jar` shell script; the `exec` makes the sidecar child PID *be* the JVM
+          # so the Rust shell's kill-on-exit terminates the backend, not just a wrapper.
+          {
+            printf '%s\n' '#!/bin/sh'
+            printf '%s\n' 'JAVA_BIN="${PHOTONIC_JAVA:-java}"'
+            printf '%s\n' 'JAR_PATH="${PHOTONIC_JAR:-$(cd "$(dirname "$0")/../Resources/resources" && pwd)/photonic-backend-0.1.0.jar}"'
+            printf '%s\n' 'exec "$JAVA_BIN" -Djava.awt.headless=true -jar "$JAR_PATH"'
+          } > "$launcher"
+          chmod +x "$launcher"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build dmg
+        working-directory: frontend
+        run: npm run tauri build -- --bundles dmg
+
+      - name: Attach dmg to draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: frontend/src-tauri/target/release/bundle/dmg/*.dmg

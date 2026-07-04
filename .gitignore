@@ -11,9 +11,14 @@ frontend/src-tauri/gen/
 # Bundled sidecar/resource binaries (built/downloaded locally, not committed)
 frontend/src-tauri/binaries/photonic-backend*
 frontend/src-tauri/resources/exiftool/exiftool
+frontend/src-tauri/resources/exiftool/exiftool.exe
 frontend/src-tauri/resources/exiftool/lib/
+frontend/src-tauri/resources/exiftool/exiftool_files/
 frontend/src-tauri/resources/runtime/
 frontend/src-tauri/resources/photonic-backend-*.jar
+
+# Compiled Windows launcher crate (source is committed; build output is not)
+frontend/src-tauri/launcher/target/
 
 # OS / editor
 .DS_Store
