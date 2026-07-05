@@ -121,6 +121,9 @@ export default function Lightbox({ photos, index, selectedIds, onToggleSelect, o
               {index + 1} / {photos.length}
             </span>
           </div>
+          <div className="lb-path" title={photo.filePath}>
+            {photo.filePath}
+          </div>
           <label className="lb-select" title="Toggle with Space">
             <input type="checkbox" checked={selected} onChange={() => onToggleSelect(photo.id)} />
             Add to “look closer at” copy set <span className="lb-key">Space</span>

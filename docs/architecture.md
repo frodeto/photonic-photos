@@ -31,11 +31,22 @@ swapped without touching the other.
 
 ## Integration handshake
 
-The backend picks a free loopback port (or honors `PHOTONIC_PORT`) and prints exactly one line to
-**stdout**: `PHOTONIC_PORT=<n>` (logs go to stderr — see `backend/src/main/resources/logback.xml`).
-The Tauri shell (`frontend/src-tauri/src/lib.rs`) reads that line, stores the port, and the WebView
-fetches it via the `get_backend_port` command (`frontend/src/api/client.ts`). In browser-only dev the
-UI falls back to `VITE_BACKEND_PORT` (default 8899).
+The backend picks a free loopback port (or honors `PHOTONIC_PORT`) and a per-launch auth token (or
+honors `PHOTONIC_TOKEN`), then — only once the socket is bound (the `ServerReady` event) — prints
+exactly two lines to **stdout**:
+
+```
+PHOTONIC_PORT=<n>
+PHOTONIC_TOKEN=<secret>
+```
+
+(logs go to stderr — see `backend/src/main/resources/logback.xml`; stdout is reserved for the
+handshake). The Tauri shell (`frontend/src-tauri/src/lib.rs`) reads both lines, and the WebView
+fetches them via the `get_backend_port` command (`frontend/src/api/client.ts`). **Every route except
+`/health` requires the token in an `X-Photonic-Token` header** — only processes that can read the
+backend's stdout (the shell) learn it, so a malicious local process or web page can't forge
+authenticated requests to 127.0.0.1. In browser-only dev the UI falls back to `VITE_BACKEND_PORT`
+(default 8899) and `VITE_BACKEND_TOKEN` (default `photonic-dev`).
 
 **Shutdown** is belt-and-braces (Tauri does not kill sidecars on its own):
 1. On `RunEvent::Exit` the shell kills the sidecar child. The launcher script `exec`s java, so
@@ -151,5 +162,4 @@ self-contained distribution (script + `lib/`) that runs on the system `/usr/bin/
 ## Backlog / next steps
 
 - `-stay_open` exiftool mode; content-hash for move/duplicate detection.
-- Optional startup token (`X-Photonic-Token`) enforced on all routes but `/health`.
 - Map view for GPS-tagged photos; richer photo-detail panel.

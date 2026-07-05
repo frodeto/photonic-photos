@@ -353,6 +353,15 @@ button:disabled {
   color: var(--muted);
 }
 
+/* Full file path on its own line (line two), beneath the inline metadata. */
+.lb-path {
+  flex-basis: 100%;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  word-break: break-all;
+}
+
 .lb-count {
   color: var(--fg) !important;
 }
