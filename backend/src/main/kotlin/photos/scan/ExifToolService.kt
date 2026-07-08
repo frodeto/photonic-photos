@@ -8,6 +8,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.slf4j.LoggerFactory
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -99,16 +101,31 @@ class ExifToolService(
     /** Reads EXIF for a batch of files in a single exiftool invocation. */
     fun readBatch(files: List<Path>): Map<Path, ExifData> {
         if (!available || files.isEmpty()) return emptyMap()
-        val cmd = buildList {
-            add(exiftoolPath)
-            add("-json")
-            add("-n")               // numeric values (FNumber etc.)
-            add("-fast2")
-            add("-charset"); add("filename=UTF8")
-            addAll(tags)
-            files.forEach { add(it.toString()) }
+        // Pass the file list via a UTF-8 argfile (-@) rather than on the command line. This
+        // sidesteps two Windows hazards in one move: the ~32K CreateProcess command-line ceiling
+        // (a 100-file batch of long NAS paths blows past it) and code-page mangling of non-ASCII
+        // names (-charset filename=UTF8 tells exiftool the argfile bytes are UTF-8; JDK 21 writes
+        // UTF-8 by default per JEP 400). Harmless on unix, which has neither limit.
+        val argfile = try {
+            writeArgFile(files)
+        } catch (e: Exception) {
+            log.warn("exiftool argfile write failed: ${e.message}")
+            return emptyMap()
         }
-        val out = runWithTimeout(cmd, BATCH_TIMEOUT_MS)?.decodeToString()
+        val out = try {
+            val cmd = buildList {
+                add(exiftoolPath)
+                add("-json")
+                add("-n")               // numeric values (FNumber etc.)
+                add("-fast2")
+                add("-charset"); add("filename=UTF8")
+                addAll(tags)
+                add("-@"); add(argfile.toString())
+            }
+            runWithTimeout(cmd, BATCH_TIMEOUT_MS)?.decodeToString()
+        } finally {
+            runCatching { Files.deleteIfExists(argfile) }
+        }
         if (out.isNullOrBlank()) return emptyMap()
         return try {
             parse(out)
@@ -116,6 +133,16 @@ class ExifToolService(
             log.warn("exiftool batch parse failed: ${e.message}")
             emptyMap()
         }
+    }
+
+    /**
+     * Writes [files] to a temp file, one absolute path per line in UTF-8, for exiftool's `-@`
+     * argfile mechanism. Caller is responsible for deleting it.
+     */
+    private fun writeArgFile(files: List<Path>): Path {
+        val argfile = Files.createTempFile("photonic-exif", ".args")
+        Files.write(argfile, files.map { it.toString() }, StandardCharsets.UTF_8)
+        return argfile
     }
 
     private fun parse(jsonText: String): Map<Path, ExifData> {
@@ -163,11 +190,26 @@ class ExifToolService(
     /** Extracts an embedded JPEG preview (used for RAW thumbnails). Returns null if none/unavailable. */
     fun extractPreviewJpeg(file: Path): ByteArray? {
         if (!available) return null
-        for (tag in listOf("-PreviewImage", "-JpgFromRaw", "-ThumbnailImage")) {
-            val bytes = runWithTimeout(listOf(exiftoolPath, "-b", tag, file.toString()), PREVIEW_TIMEOUT_MS)
-            if (bytes != null && bytes.size > 100) return bytes
+        // Route the path through the same UTF-8 argfile as readBatch so non-ASCII names survive
+        // the Windows code page (-charset filename=UTF8). One argfile serves all three tag probes.
+        val argfile = try {
+            writeArgFile(listOf(file))
+        } catch (e: Exception) {
+            log.warn("exiftool argfile write failed: ${e.message}")
+            return null
         }
-        return null
+        return try {
+            for (tag in listOf("-PreviewImage", "-JpgFromRaw", "-ThumbnailImage")) {
+                val bytes = runWithTimeout(
+                    listOf(exiftoolPath, "-b", tag, "-charset", "filename=UTF8", "-@", argfile.toString()),
+                    PREVIEW_TIMEOUT_MS,
+                )
+                if (bytes != null && bytes.size > 100) return bytes
+            }
+            null
+        } finally {
+            runCatching { Files.deleteIfExists(argfile) }
+        }
     }
 
     private fun JsonObject.str(key: String): String? =

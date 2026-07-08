@@ -1,0 +1,31 @@
+[package]
+name = "photonic-launcher"
+version = "0.1.0"
+edition = "2021"
+description = "Windows sidecar launcher that runs the Photonic Photos backend JVM"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "photonic-launcher"
+path = "src/main.rs"
+
+# Kept small: this is a bundled sidecar, not a distributed binary.
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+
+# windows-sys only builds on Windows; the crate is only ever compiled there anyway
+# (it uses std::os::windows and the Win32 Job Object API). Gating keeps a stray
+# `cargo metadata`/lockfile resolve on another host from pulling it unnecessarily.
+[target.'cfg(windows)'.dependencies]
+# Win32_Security is required because CreateJobObjectW's signature references SECURITY_ATTRIBUTES;
+# windows-sys gates the function on that feature even though we pass a null attributes pointer.
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }

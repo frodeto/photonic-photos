@@ -5,6 +5,20 @@ use tauri::{async_runtime, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+// Resource-relative paths to the bundled JRE and exiftool, which differ by platform. On
+// Windows the JRE ships `java.exe` and exiftool is a self-contained `exiftool.exe`; on
+// unix it's the `java` binary and the perl-script `exiftool`. The sidecar name, handshake
+// parsing, and capabilities are platform-agnostic — only these two paths change.
+#[cfg(windows)]
+const JAVA_RESOURCE: &str = "resources/runtime/bin/java.exe";
+#[cfg(not(windows))]
+const JAVA_RESOURCE: &str = "resources/runtime/bin/java";
+
+#[cfg(windows)]
+const EXIFTOOL_RESOURCE: &str = "resources/exiftool/exiftool.exe";
+#[cfg(not(windows))]
+const EXIFTOOL_RESOURCE: &str = "resources/exiftool/exiftool";
+
 /// Holds the port and auth token the Kotlin backend chose at startup
 /// (parsed from its stdout handshake).
 #[derive(Default)]
@@ -51,8 +65,7 @@ pub fn run() {
             // best-effort: the launcher falls back to `java`/relative paths and the
             // backend falls back to `exiftool` on PATH if a var is absent.
             let resolver = app.path();
-            if let Ok(java) = resolver.resolve("resources/runtime/bin/java", BaseDirectory::Resource)
-            {
+            if let Ok(java) = resolver.resolve(JAVA_RESOURCE, BaseDirectory::Resource) {
                 sidecar = sidecar.env("PHOTONIC_JAVA", java.to_string_lossy().to_string());
             }
             if let Ok(jar) =
@@ -60,9 +73,7 @@ pub fn run() {
             {
                 sidecar = sidecar.env("PHOTONIC_JAR", jar.to_string_lossy().to_string());
             }
-            if let Ok(exiftool) =
-                resolver.resolve("resources/exiftool/exiftool", BaseDirectory::Resource)
-            {
+            if let Ok(exiftool) = resolver.resolve(EXIFTOOL_RESOURCE, BaseDirectory::Resource) {
                 sidecar = sidecar.env("PHOTONIC_EXIFTOOL", exiftool.to_string_lossy().to_string());
             }
 
@@ -98,9 +109,11 @@ pub fn run() {
         .expect("error while building Photonic Photos")
         .run(|app, event| {
             // Tauri does not kill sidecars on its own; without this the backend JVM
-            // outlives the app. The launcher script `exec`s java, so the child PID we
-            // hold IS the JVM. SQLite (WAL) is crash-safe and scans are resumable, so a
-            // hard kill needs no graceful-shutdown dance.
+            // outlives the app. On unix the launcher script `exec`s java, so the child PID
+            // we hold IS the JVM. On Windows there is no `exec`: the child we kill is the
+            // launcher exe, which has assigned java.exe to a KILL_ON_JOB_CLOSE Job Object —
+            // so the JVM dies with the launcher regardless. SQLite (WAL) is crash-safe and
+            // scans are resumable, so a hard kill needs no graceful-shutdown dance.
             if let tauri::RunEvent::Exit = event {
                 if let Some(child) = app
                     .state::<Mutex<Option<CommandChild>>>()

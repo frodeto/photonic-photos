@@ -147,6 +147,19 @@ app's Resources dir and passes them to the launcher/sidecar as `PHOTONIC_JAVA` /
 self-contained distribution (script + `lib/`) that runs on the system `/usr/bin/perl`.
 `npm run tauri build` produces the `.dmg` (macOS); see the README for the one-time staging steps.
 
+**Windows (NSIS x64):** the same jlink-runtime + fat-jar + ExifTool resources, with two platform
+deltas. (1) Windows has no `exec`, so the macOS launcher script — which relies on the sidecar PID
+*being* the JVM for kill-on-exit — is replaced by a small Rust **launcher crate**
+(`frontend/src-tauri/launcher/`): it spawns `java.exe` with inherited stdio (handshake + stdin-EOF
+watchdog unchanged) and puts it in a `KILL_ON_JOB_CLOSE` **Job Object**, so killing the launcher
+deterministically kills the JVM. (2) ExifTool ships as the self-contained Windows build
+(`exiftool.exe` + `exiftool_files/`, bundled Perl — no system Perl). `tauri.windows.conf.json` (merged
+over the base config on Windows) selects the NSIS target, a per-user install, and silent WebView2
+bootstrapping. A `v*` tag drives `.github/workflows/release.yml`, which builds both installers and
+attaches them to a draft GitHub Release. To keep non-ASCII filenames intact across the Windows code
+page (and to dodge the 32K command-line limit on large batches), `ExifToolService` passes file lists
+to exiftool via a UTF-8 argfile (`-@`) with `-charset filename=UTF8` on all platforms.
+
 ## Status / verified
 
 - ✅ Backend compiles (`mvn compile`), unit/integration test passes (`mvn test`): recursive scan,
