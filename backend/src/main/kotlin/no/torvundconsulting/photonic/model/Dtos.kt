@@ -1,4 +1,4 @@
-package photos.model
+package no.torvundconsulting.photonic.model
 
 import kotlinx.serialization.Serializable
 

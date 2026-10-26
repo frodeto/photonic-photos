@@ -1,6 +1,6 @@
-package photos
+package no.torvundconsulting.photonic
 
-import photos.scan.ExifToolService
+import no.torvundconsulting.photonic.scan.ExifToolService
 import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals

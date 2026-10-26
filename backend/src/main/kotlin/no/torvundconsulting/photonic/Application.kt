@@ -1,14 +1,14 @@
-package photos
+package no.torvundconsulting.photonic
 
 import io.ktor.server.application.ServerReady
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
-import photos.api.photonicModule
-import photos.collect.CollectService
-import photos.db.Db
-import photos.scan.ExifToolService
-import photos.scan.Scanner
-import photos.thumbnail.ThumbnailService
+import no.torvundconsulting.photonic.api.photonicModule
+import no.torvundconsulting.photonic.collect.CollectService
+import no.torvundconsulting.photonic.db.Db
+import no.torvundconsulting.photonic.scan.ExifToolService
+import no.torvundconsulting.photonic.scan.Scanner
+import no.torvundconsulting.photonic.thumbnail.ThumbnailService
 import java.net.ServerSocket
 import java.security.SecureRandom
 import java.util.Base64

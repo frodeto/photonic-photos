@@ -1,15 +1,15 @@
-package photos
+package no.torvundconsulting.photonic
 
 import org.jetbrains.exposed.sql.deleteAll
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
-import photos.db.Db
-import photos.db.Photos
-import photos.db.ScanJobs
-import photos.db.ScanRoots
-import photos.scan.ExifToolService
-import photos.scan.Scanner
-import photos.thumbnail.ThumbnailService
+import no.torvundconsulting.photonic.db.Db
+import no.torvundconsulting.photonic.db.Photos
+import no.torvundconsulting.photonic.db.ScanJobs
+import no.torvundconsulting.photonic.db.ScanRoots
+import no.torvundconsulting.photonic.scan.ExifToolService
+import no.torvundconsulting.photonic.scan.Scanner
+import no.torvundconsulting.photonic.thumbnail.ThumbnailService
 import java.awt.Color
 import java.awt.image.BufferedImage
 import java.nio.file.Files

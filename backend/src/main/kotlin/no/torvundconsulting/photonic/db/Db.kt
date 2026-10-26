@@ -1,4 +1,4 @@
-package photos.db
+package no.torvundconsulting.photonic.db
 
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils

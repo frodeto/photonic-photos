@@ -1,9 +1,9 @@
-package photos.collect
+package no.torvundconsulting.photonic.collect
 
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
-import photos.db.Photos
-import photos.model.CollectResult
+import no.torvundconsulting.photonic.db.Photos
+import no.torvundconsulting.photonic.model.CollectResult
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
