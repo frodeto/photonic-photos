@@ -1,4 +1,4 @@
-package photos.scan
+package no.torvundconsulting.photonic.scan
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,10 +16,10 @@ import org.jetbrains.exposed.sql.statements.UpdateBuilder
 import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
-import photos.db.Photos
-import photos.db.ScanJobs
-import photos.db.ScanRoots
-import photos.thumbnail.ThumbnailService
+import no.torvundconsulting.photonic.db.Photos
+import no.torvundconsulting.photonic.db.ScanJobs
+import no.torvundconsulting.photonic.db.ScanRoots
+import no.torvundconsulting.photonic.thumbnail.ThumbnailService
 import java.io.IOException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files

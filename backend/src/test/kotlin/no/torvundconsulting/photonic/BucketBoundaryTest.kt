@@ -1,8 +1,8 @@
-package photos
+package no.torvundconsulting.photonic
 
-import photos.api.bucketEnd
-import photos.api.bucketStart
-import photos.api.fillBuckets
+import no.torvundconsulting.photonic.api.bucketEnd
+import no.torvundconsulting.photonic.api.bucketStart
+import no.torvundconsulting.photonic.api.fillBuckets
 import java.time.Instant
 import java.time.ZoneId
 import kotlin.test.Test

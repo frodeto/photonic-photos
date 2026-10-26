@@ -1,4 +1,4 @@
-package photos.db
+package no.torvundconsulting.photonic.db
 
 import org.jetbrains.exposed.dao.id.IntIdTable
 

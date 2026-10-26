@@ -1,7 +1,7 @@
-package photos
+package no.torvundconsulting.photonic
 
-import photos.scan.ExifToolService
-import photos.thumbnail.ThumbnailService
+import no.torvundconsulting.photonic.scan.ExifToolService
+import no.torvundconsulting.photonic.thumbnail.ThumbnailService
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import kotlin.test.AfterTest

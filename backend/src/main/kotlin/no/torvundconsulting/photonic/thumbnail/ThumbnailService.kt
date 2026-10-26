@@ -1,6 +1,6 @@
-package photos.thumbnail
+package no.torvundconsulting.photonic.thumbnail
 
-import photos.scan.ExifToolService
+import no.torvundconsulting.photonic.scan.ExifToolService
 import java.awt.RenderingHints
 import java.awt.geom.AffineTransform
 import java.awt.image.BufferedImage

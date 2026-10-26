@@ -56,7 +56,7 @@ authenticated requests to 127.0.0.1. In browser-only dev the UI falls back to `V
    sent. Dev runs (`mvn exec:java`, nohup) don't set the var and are unaffected.
 A hard kill is fine: SQLite runs in WAL (crash-safe) and scans are incrementally resumable.
 
-## API (`backend/src/main/kotlin/photos/api/Routes.kt`)
+## API (`backend/src/main/kotlin/no/torvundconsulting/photonic/api/Routes.kt`)
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -76,7 +76,7 @@ Thumbnails/previews are served with `Cache-Control: … immutable`; the client a
 source file is re-indexed. The WebView never refetches an unchanged image.
 | `POST` | `/collect` | `{photoIds[], targetFolder}` → copy originals out, returns counts |
 
-## Data model (`backend/src/main/kotlin/photos/db/Tables.kt`)
+## Data model (`backend/src/main/kotlin/no/torvundconsulting/photonic/db/Tables.kt`)
 
 - **`scan_root`** — path (unique), addedAt, lastScanAt.
 - **`photo`** — rootId, filePath (unique), fileName, fileSize, **fileMtime**, contentHash (reserved),
